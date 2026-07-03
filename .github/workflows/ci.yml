@@ -15,7 +15,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8
+      # v8 has no floating major tag (only exact v8.x.y tags exist).
+      - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
       - name: Run tests
