@@ -348,6 +348,11 @@ def main(argv: list[str] | None = None) -> int:
     except PermanentError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # Interactive 'auth' is the realistic target of a Ctrl+C; exit
+        # quietly with the conventional code instead of a traceback.
+        print("interrupted", file=sys.stderr)
+        return 130
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 1

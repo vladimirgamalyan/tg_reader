@@ -91,6 +91,20 @@ def test_download_error_exits_1(mocker, capsys):
     assert "no media" in captured.err
 
 
+def test_keyboard_interrupt_exits_130(mocker, capsys):
+    # run_read is replaced with a plain mock so that no coroutine is
+    # created (the patched asyncio.run would never await it).
+    mocker.patch("tg_reader.cli.run_read")
+    mocker.patch("tg_reader.cli.asyncio.run", side_effect=KeyboardInterrupt)
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "interrupted" in captured.err
+
+
 def test_download_retry_later_exits_2(mocker, capsys):
     mocker.patch(
         "tg_reader.cli.run_download",

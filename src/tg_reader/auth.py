@@ -6,7 +6,12 @@ from telethon import TelegramClient, utils
 from telethon.errors import FloodWaitError
 
 from . import config, throttle
-from .session import TRANSIENT_TELEGRAM_ERRORS, retry_later_from_transient_error
+from .errors import PermanentError
+from .session import (
+    INVALID_SESSION_ERRORS,
+    TRANSIENT_TELEGRAM_ERRORS,
+    retry_later_from_transient_error,
+)
 
 
 def _prompt_api_id() -> int:
@@ -60,6 +65,7 @@ async def run_auth() -> None:
             api_hash,
             flood_sleep_threshold=throttle.FLOOD_SLEEP_THRESHOLD,
         )
+        invalid_session_error = None
         try:
             await client.connect()
             if await client.is_user_authorized():
@@ -80,9 +86,23 @@ async def run_auth() -> None:
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
             ) from error
+        except INVALID_SESSION_ERRORS as error:
+            # The client still holds the session file open here; it is
+            # deleted after the disconnect below.
+            invalid_session_error = error
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error
         finally:
             await client.disconnect()
+        if invalid_session_error is not None:
+            # A dead session (revoked, AUTH_KEY_DUPLICATED) fails the same
+            # way on every connect; deleting the file lets the next run log
+            # in from scratch.
+            config.session_path().unlink(missing_ok=True)
+            raise PermanentError(
+                f"The stored session is no longer valid "
+                f"({type(invalid_session_error).__name__}); the dead session "
+                "file has been deleted. Run 'tg-reader auth' again to log in."
+            ) from invalid_session_error
     finally:
         lock.release()

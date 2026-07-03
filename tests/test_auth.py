@@ -9,11 +9,12 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import FloodWaitError, ServerError
+from telethon.errors import AuthKeyDuplicatedError, FloodWaitError, ServerError
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
 from tg_reader.auth import _load_or_prompt_credentials, run_auth
+from tg_reader.errors import PermanentError
 from tg_reader.throttle import RetryLaterError
 
 
@@ -128,6 +129,22 @@ async def test_run_auth_does_not_save_prompted_credentials_on_login_failure(
         await run_auth()
 
     assert config.load_config() is None
+
+
+async def test_run_auth_dead_session_is_deleted(config_dir, mocker):
+    # AUTH_KEY_DUPLICATED at connect time: the stored session is dead and
+    # would fail the same way on every connect, so auth must delete the
+    # file (after the client releases it) and explain what happened.
+    client = make_client(mocker)
+    client.connect.side_effect = AuthKeyDuplicatedError(request=None)
+    session_file = config_dir / config.SESSION_FILENAME
+    session_file.write_text("dead", encoding="utf-8")
+
+    with pytest.raises(PermanentError, match="no longer valid"):
+        await run_auth()
+
+    assert not session_file.exists()
+    client.disconnect.assert_awaited_once()
 
 
 async def test_run_auth_refuses_while_flood_wait_active(config_dir, mocker):
