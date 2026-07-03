@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Run tests
+        run: |
+          uv sync --locked
+          uv run pytest
+      # Users install straight from git, so the packaging and the entry
+      # point are part of the contract: build and run the tool the same
+      # way 'uvx --from git+<repo-url>' would.
+      - name: Smoke-test the packaged entry point
+        shell: bash
+        run: |
+          uvx --from . tg-reader --help
+          uvx --from . tg-reader read --help
+          uvx --from . tg-reader download --help
+      - name: Unauthorized read exits with code 1
+        shell: bash
+        run: |
+          set +e
+          uvx --from . tg-reader read 1
+          code=$?
+          set -e
+          test "$code" -eq 1

@@ -277,6 +277,13 @@ reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
 no-media and message-not-found errors).
 
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs the suite on Ubuntu
+and Windows for every push to `main` and every pull request. Since users
+install straight from the git repository, the workflow also smoke-tests
+the packaged entry point (`uvx --from . tg-reader ... --help`) and the
+unauthorized exit-code contract. The real Telegram API is never touched:
+CI guards the logic and the install path, not live protocol behavior.
+
 ## Layout
 
 A package with src layout and a `tg-reader` entry point in `[project.scripts]`:
