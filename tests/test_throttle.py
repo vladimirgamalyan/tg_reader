@@ -5,6 +5,8 @@ is redirected to a temporary path.
 """
 
 import json
+import os
+import stat
 import time
 
 import pytest
@@ -127,6 +129,16 @@ def test_acquire_lock_and_release(config_dir):
     assert lock.is_locked
     lock.release()
     assert not lock.is_locked
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions only")
+def test_acquire_lock_makes_directory_private(config_dir):
+    lock = throttle.acquire_lock()
+
+    try:
+        assert stat.S_IMODE(config_dir.stat().st_mode) == 0o700
+    finally:
+        lock.release()
 
 
 def test_acquire_lock_busy(config_dir, mocker):

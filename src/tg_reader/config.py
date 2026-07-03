@@ -24,6 +24,15 @@ def session_path() -> Path:
     return config_dir() / SESSION_FILENAME
 
 
+def ensure_config_dir() -> Path:
+    """Create the per-user config directory and make it private on POSIX."""
+    directory = config_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name == "posix":
+        os.chmod(directory, 0o700)
+    return directory
+
+
 def load_config() -> dict | None:
     """Return the stored credentials, or None if absent or unusable.
 
@@ -44,11 +53,6 @@ def load_config() -> dict | None:
 
 
 def save_config(api_id: int, api_hash: str) -> None:
-    directory = config_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    # The directory holds secrets (api_hash, the Telethon session file that
-    # grants full account access): keep it private to the user on POSIX.
-    # Effectively a no-op on Windows.
-    os.chmod(directory, 0o700)
+    ensure_config_dir()
     data = {"api_id": api_id, "api_hash": api_hash}
     config_path().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

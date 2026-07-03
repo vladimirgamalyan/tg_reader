@@ -62,13 +62,13 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    config.config_dir().mkdir(parents=True, exist_ok=True)
+    config.ensure_config_dir()
     _state_path().write_text(json.dumps(state) + "\n", encoding="utf-8")
 
 
 def acquire_lock() -> FileLock:
     """Take the global inter-process lock; the caller must release it."""
-    config.config_dir().mkdir(parents=True, exist_ok=True)
+    config.ensure_config_dir()
     lock = FileLock(str(config.config_dir() / LOCK_FILENAME))
     try:
         lock.acquire(timeout=LOCK_TIMEOUT)
