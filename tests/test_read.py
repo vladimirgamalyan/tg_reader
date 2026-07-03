@@ -14,7 +14,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telethon import utils
 from telethon.errors import FloodWaitError
-from telethon.tl.types import PeerChannel, PeerChat, PeerUser, User
+from telethon.tl.types import (
+    Document,
+    DocumentAttributeFilename,
+    MessageMediaDocument,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    User,
+)
 
 from tg_reader import config, throttle
 from tg_reader.read import (
@@ -45,6 +53,8 @@ def make_message(**overrides):
         "sender_id": 111222333,
         "sender": User(id=111222333, first_name="John", last_name="Doe"),
         "message": "message text",
+        "grouped_id": None,
+        "media": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -148,6 +158,8 @@ def test_message_to_dict_all_fields():
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": "message text",
+        "grouped_id": None,
+        "media": None,
     }
 
 
@@ -161,6 +173,34 @@ def test_message_to_dict_nulls():
         "sender_id": None,
         "sender_name": None,
         "text": None,
+        "grouped_id": None,
+        "media": None,
+    }
+
+
+def test_message_to_dict_media_and_album():
+    document = Document(
+        id=1,
+        access_hash=2,
+        file_reference=b"",
+        date=datetime(2026, 7, 3, tzinfo=timezone.utc),
+        mime_type="application/pdf",
+        size=2048,
+        dc_id=2,
+        attributes=[DocumentAttributeFilename(file_name="report.pdf")],
+    )
+    message = make_message(
+        grouped_id=777, media=MessageMediaDocument(document=document)
+    )
+
+    result = message_to_dict(message)
+
+    assert result["grouped_id"] == 777
+    assert result["media"] == {
+        "type": "document",
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 2048,
     }
 
 

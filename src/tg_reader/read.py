@@ -4,7 +4,7 @@ from telethon import TelegramClient, utils
 from telethon.errors import FloodWaitError
 from telethon.tl.types import PeerChannel, PeerChat, PeerUser
 
-from . import config, throttle
+from . import config, media, throttle
 
 
 class NotAuthorizedError(Exception):
@@ -64,6 +64,8 @@ def message_to_dict(message) -> dict:
         "sender_id": message.sender_id,
         "sender_name": utils.get_display_name(message.sender) or None,
         "text": message.message or None,
+        "grouped_id": message.grouped_id,
+        "media": media.media_info(message.media),
     }
 
 
