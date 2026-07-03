@@ -144,7 +144,10 @@ def _sanitize(name: str) -> str:
         # An overlong "extension" is not a real one; keep it bounded too.
         extension = _truncate_utf8(extension, 20)
         stem = _truncate_utf8(stem, MAX_NAME_BYTES - len(extension.encode("utf-8")))
-        name = stem + extension
+        # The byte cut can land right after an inner space; Windows silently
+        # drops trailing spaces and dots, so the reported name would not
+        # match the name on disk.
+        name = (stem + extension).rstrip(". ")
     return name
 
 
@@ -157,9 +160,16 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
 
 
 def _extension(info: dict) -> str:
+    """Extension for a generated filename, consistent with the MIME type.
+
+    The per-type default is kept when the MIME type is missing, unknown or
+    agrees with it (image/jpeg must stay '.jpg' even though the platform
+    MIME table may list '.jpe' first); otherwise the MIME type wins, so an
+    unnamed 'audio/flac' track does not get a misleading '.mp3'.
+    """
     extension = TYPE_EXTENSIONS[info["type"]]
-    if extension == ".bin" and info["mime_type"]:
-        guessed = mimetypes.guess_extension(info["mime_type"])
-        if guessed:
-            return guessed
+    if info["mime_type"]:
+        valid = mimetypes.guess_all_extensions(info["mime_type"])
+        if valid and extension not in valid:
+            return valid[0]
     return extension

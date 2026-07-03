@@ -259,12 +259,50 @@ def test_build_filename_unnamed_document_without_mime():
     assert build_filename(-100123, 555, info()) == "-100123_555_document.bin"
 
 
+def test_build_filename_unnamed_document_uses_mime_extension():
+    result = build_filename(-100123, 555, info(mime_type="application/pdf"))
+
+    assert result == "-100123_555_document.pdf"
+
+
+def test_build_filename_unnamed_audio_mime_wins_over_type_default():
+    # The per-type default (.mp3) would be misleading for an AAC track:
+    # when the MIME type contradicts the default, the MIME type wins.
+    # (audio/aac is in the mimetypes table of every supported Python.)
+    result = build_filename(
+        -100123, 555, info(media_type="audio", mime_type="audio/aac")
+    )
+
+    assert result == "-100123_555_audio.aac"
+
+
+def test_build_filename_unnamed_photo_keeps_jpg_for_jpeg_mime():
+    # image/jpeg maps to several extensions ('.jpe' may be listed first):
+    # the default must be kept whenever it is valid for the MIME type.
+    result = build_filename(
+        -100123, 555, info(media_type="photo", mime_type="image/jpeg")
+    )
+
+    assert result == "-100123_555_photo.jpg"
+
+
 def test_build_filename_overlong_name_truncated_keeps_extension():
     result = build_filename(-100123, 555, info(filename="x" * 300 + ".txt"))
 
     assert result.startswith("-100123_555_x")
     assert result.endswith(".txt")
     assert len(result) == len("-100123_555_") + MAX_NAME_BYTES
+
+
+def test_build_filename_truncated_name_has_no_trailing_space():
+    # The byte cut can land right after an inner space; Windows silently
+    # drops trailing spaces and dots, so the on-disk name would differ
+    # from the reported one.
+    filename = "x" * (MAX_NAME_BYTES - 1) + " " + "y" * 300
+
+    result = build_filename(-100123, 555, info(filename=filename))
+
+    assert result == "-100123_555_" + "x" * (MAX_NAME_BYTES - 1)
 
 
 def test_build_filename_overlong_name_truncated_by_utf8_bytes():
