@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from .auth import run_auth
@@ -214,6 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=MAIN_DESCRIPTION,
         epilog=MAIN_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version('tg-reader')}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

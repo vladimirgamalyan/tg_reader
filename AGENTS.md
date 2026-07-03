@@ -10,3 +10,13 @@
 ## Code Guidelines
 Follow the behavioral rules in @CODE_GUIDELINES.md
 
+## Versioning
+The tool is installed straight from git, so `--version` is only truthful if
+the version is actually maintained:
+- Bump `version` in `pyproject.toml` (semver) in the same commit as any
+  user-visible change: new command or flag, changed output schema, changed
+  behavior or error contract.
+- Run `uv lock` after bumping so `uv.lock` stays in sync (CI enforces this
+  via `uv sync --locked`).
+- Internal refactors, docs-only and test-only changes do not need a bump.
+

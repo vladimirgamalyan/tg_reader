@@ -1,6 +1,7 @@
 """Unit tests for CLI argument handling, output and exit codes."""
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,14 @@ import pytest
 from tg_reader import cli
 from tg_reader.download import DownloadError
 from tg_reader.throttle import RetryLaterError
+
+
+def test_version_flag_prints_version_and_exits_0(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--version"])
+
+    assert excinfo.value.code == 0
+    assert re.fullmatch(r"tg-reader \d+\.\d+\.\d+\n", capsys.readouterr().out)
 
 
 def test_download_requires_output():
