@@ -13,7 +13,7 @@ from telethon.errors import FloodWaitError
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
-from tg_reader.auth import run_auth
+from tg_reader.auth import _load_or_prompt_credentials, run_auth
 from tg_reader.throttle import RetryLaterError
 
 
@@ -32,6 +32,19 @@ def make_client(mocker):
     client.get_me.return_value = User(id=42, first_name="John")
     mocker.patch("tg_reader.auth.TelegramClient", return_value=client)
     return client
+
+
+def test_load_or_prompt_credentials_hides_api_hash(tmp_path, monkeypatch, capsys, mocker):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "123")
+    getpass = mocker.patch("tg_reader.auth.getpass.getpass", return_value=" hash ")
+
+    assert _load_or_prompt_credentials() == (123, "hash")
+
+    getpass.assert_called_once_with("api_hash: ")
+    output = capsys.readouterr().out
+    assert "api_hash input will not be displayed while you type." in output
+    assert config.load_config() == {"api_id": 123, "api_hash": "hash"}
 
 
 async def test_run_auth_holds_lock_around_the_session(config_dir, mocker):

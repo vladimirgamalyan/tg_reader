@@ -1,5 +1,7 @@
 """Interactive authorization: collect API credentials and log in."""
 
+import getpass
+
 from telethon import TelegramClient, utils
 from telethon.errors import FloodWaitError
 
@@ -22,7 +24,8 @@ def _load_or_prompt_credentials() -> tuple[int, str]:
     print("API credentials are required.")
     print("Get them at https://my.telegram.org -> 'API development tools'.")
     api_id = _prompt_api_id()
-    api_hash = input("api_hash: ").strip()
+    print("api_hash input will not be displayed while you type.")
+    api_hash = getpass.getpass("api_hash: ").strip()
     config.save_config(api_id, api_hash)
     print(f"Credentials saved to {config.config_path()}")
     return api_id, api_hash
