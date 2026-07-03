@@ -186,68 +186,94 @@ def info(media_type="document", filename=None, mime_type=None):
 
 
 def test_build_filename_plain_name():
-    assert build_filename(555, info(filename="report.pdf")) == "555_report.pdf"
+    result = build_filename(-100123, 555, info(filename="report.pdf"))
+
+    assert result == "-100123_555_report.pdf"
+
+
+def test_build_filename_includes_chat_id():
+    # Message IDs are only unique within one chat: the same msg_id from
+    # another chat must map to a different file name.
+    one = build_filename(-100123, 555, info(filename="report.pdf"))
+    other = build_filename(-100456, 555, info(filename="report.pdf"))
+
+    assert one != other
 
 
 def test_build_filename_path_traversal_neutralized():
-    result = build_filename(555, info(filename="..\\..\\evil.exe"))
+    result = build_filename(-100123, 555, info(filename="..\\..\\evil.exe"))
 
     assert "\\" not in result
     assert "/" not in result
-    assert result == "555_.._.._evil.exe"
+    assert result == "-100123_555_.._.._evil.exe"
 
 
 def test_build_filename_forbidden_characters_replaced():
-    result = build_filename(555, info(filename='a<b>c:d"e|f?g*h.txt'))
+    result = build_filename(-100123, 555, info(filename='a<b>c:d"e|f?g*h.txt'))
 
-    assert result == "555_a_b_c_d_e_f_g_h.txt"
+    assert result == "-100123_555_a_b_c_d_e_f_g_h.txt"
+
+
+def test_build_filename_invisible_and_bidi_characters_replaced():
+    # U+202E (right-to-left override) makes 'a<RLO>gpj.exe' render as
+    # 'axe.jpg'-style spoofed names; zero-width characters hide in names.
+    rlo, zwsp = chr(0x202E), chr(0x200B)
+    result = build_filename(-100123, 555, info(filename=f"a{rlo}gpj.exe{zwsp}b.txt"))
+
+    assert result == "-100123_555_a_gpj.exe_b.txt"
 
 
 def test_build_filename_reserved_device_name_neutralized_by_prefix():
-    # 'CON.txt' alone is a reserved name on Windows; the msg_id prefix
+    # 'CON.txt' alone is a reserved name on Windows; the numeric prefix
     # makes the base name harmless.
-    assert build_filename(555, info(filename="CON.txt")) == "555_CON.txt"
+    result = build_filename(-100123, 555, info(filename="CON.txt"))
+
+    assert result == "-100123_555_CON.txt"
 
 
 def test_build_filename_trailing_dots_and_spaces_stripped():
-    assert build_filename(555, info(filename="name... ")) == "555_name"
+    assert build_filename(-100123, 555, info(filename="name... ")) == "-100123_555_name"
 
 
 def test_build_filename_dots_only_name_falls_back_to_generated():
-    result = build_filename(555, info(media_type="photo", filename="..."))
+    result = build_filename(-100123, 555, info(media_type="photo", filename="..."))
 
-    assert result == "555_photo.jpg"
+    assert result == "-100123_555_photo.jpg"
 
 
 def test_build_filename_unnamed_photo():
-    assert build_filename(555, info(media_type="photo")) == "555_photo.jpg"
+    result = build_filename(-100123, 555, info(media_type="photo"))
+
+    assert result == "-100123_555_photo.jpg"
 
 
 def test_build_filename_unnamed_voice():
-    result = build_filename(555, info(media_type="voice", mime_type="audio/ogg"))
+    result = build_filename(
+        -100123, 555, info(media_type="voice", mime_type="audio/ogg")
+    )
 
-    assert result == "555_voice.ogg"
+    assert result == "-100123_555_voice.ogg"
 
 
 def test_build_filename_unnamed_document_without_mime():
-    assert build_filename(555, info()) == "555_document.bin"
+    assert build_filename(-100123, 555, info()) == "-100123_555_document.bin"
 
 
 def test_build_filename_overlong_name_truncated_keeps_extension():
-    result = build_filename(555, info(filename="x" * 300 + ".txt"))
+    result = build_filename(-100123, 555, info(filename="x" * 300 + ".txt"))
 
-    assert result.startswith("555_x")
+    assert result.startswith("-100123_555_x")
     assert result.endswith(".txt")
-    assert len(result) == len("555_") + MAX_NAME_BYTES
+    assert len(result) == len("-100123_555_") + MAX_NAME_BYTES
 
 
 def test_build_filename_overlong_name_truncated_by_utf8_bytes():
     # 100 emoji are 100 characters but 400 UTF-8 bytes: the cap must be
     # applied to bytes (255-byte filesystem limits) without splitting a
     # character.
-    result = build_filename(555, info(filename="\U0001f642" * 100 + ".txt"))
+    result = build_filename(-100123, 555, info(filename="\U0001f642" * 100 + ".txt"))
 
-    name = result.removeprefix("555_")
+    name = result.removeprefix("-100123_555_")
     assert len(name.encode("utf-8")) <= MAX_NAME_BYTES
     assert result.endswith(".txt")
     assert "\U0001f642" in name

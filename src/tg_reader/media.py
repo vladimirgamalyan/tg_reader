@@ -31,12 +31,25 @@ TYPE_EXTENSIONS = {
     "document": ".bin",
 }
 
-# Cap on the sanitized name (extension included), before the msg_id prefix.
+# Cap on the sanitized name (extension included), before the
+# '<chat_id>_<msg_id>_' prefix.
 # Counted in UTF-8 bytes, not characters: filesystem limits (e.g. 255 bytes
 # per name on ext4) apply to bytes, and the name is sender-controlled.
 MAX_NAME_BYTES = 100
 
-_FORBIDDEN_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# Besides path separators and Windows-forbidden punctuation, reject
+# invisible Unicode: C0/C1 controls and the zero-width/bidi-control
+# characters an attacker can use to visually spoof the extension
+# (e.g. 'photo_<U+202E>gpj.exe' renders as 'photo_exe.jpg').
+_FORBIDDEN_CHARS = re.compile(
+    r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f'  # separators, Windows-forbidden, controls
+    r"\u061c"  # Arabic letter mark (bidi)
+    r"\u200b-\u200f"  # zero-width space/joiners, LRM, RLM
+    r"\u2028\u2029"  # line and paragraph separators
+    r"\u202a-\u202e"  # bidi embedding and override controls
+    r"\u2066-\u2069"  # bidi isolate controls
+    r"\ufeff]"  # zero-width no-break space (BOM)
+)
 
 
 def media_info(media) -> dict | None:
@@ -105,18 +118,20 @@ def _document_filename(document: Document) -> str | None:
     return None
 
 
-def build_filename(msg_id: int, info: dict) -> str:
-    """Deterministic safe filename: '<msg_id>_<sanitized name>'.
+def build_filename(chat_id: int, msg_id: int, info: dict) -> str:
+    """Deterministic safe filename: '<chat_id>_<msg_id>_<sanitized name>'.
 
-    Original names are sender-controlled and never used verbatim. The
-    msg_id prefix rules out collisions between messages and neutralizes
-    Windows reserved device names (the base name never matches CON, NUL,
-    ...). Media without a name gets a generated one, e.g. 'photo.jpg'.
+    Original names are sender-controlled and never used verbatim. Message
+    IDs are only unique within one chat, so the prefix includes the chat ID:
+    downloads from different chats into one directory cannot collide. The
+    prefix also neutralizes Windows reserved device names (the base name
+    never matches CON, NUL, ...). Media without a name gets a generated
+    one, e.g. 'photo.jpg'.
     """
     name = _sanitize(info["filename"] or "")
     if not name:
         name = info["type"] + _extension(info)
-    return f"{msg_id}_{name}"
+    return f"{chat_id}_{msg_id}_{name}"
 
 
 def _sanitize(name: str) -> str:

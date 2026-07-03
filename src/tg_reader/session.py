@@ -9,7 +9,13 @@ only supply the work done inside the session.
 from contextlib import asynccontextmanager
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, ServerError, TimedOutError
+from telethon.errors import (
+    AuthKeyDuplicatedError,
+    FloodWaitError,
+    ServerError,
+    TimedOutError,
+    UnauthorizedError,
+)
 
 from . import config, throttle
 from .errors import PermanentError
@@ -24,6 +30,15 @@ TRANSIENT_TELEGRAM_ERRORS = (
     TimeoutError,
     ServerError,
     TimedOutError,
+)
+
+# The session stopped being valid mid-use: revoked from another device,
+# expired, or the session file was copied to a second machine
+# (AUTH_KEY_DUPLICATED). Telling the agent to retry would loop forever;
+# the fix is a new interactive login.
+INVALID_SESSION_ERRORS = (
+    UnauthorizedError,
+    AuthKeyDuplicatedError,
 )
 
 
@@ -68,6 +83,12 @@ async def telegram_session():
             throttle.record_flood_wait(error.seconds)
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
+            ) from error
+        except INVALID_SESSION_ERRORS as error:
+            raise NotAuthorizedError(
+                f"The stored session is no longer valid "
+                f"({type(error).__name__}). "
+                "Run 'tg-reader auth' again (interactive)."
             ) from error
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error

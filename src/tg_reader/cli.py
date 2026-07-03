@@ -145,10 +145,12 @@ CHAT_ID is a non-zero numeric chat/channel/user ID, same accepted forms as in
 the 'read' output; the message must actually carry media ('media' is not null).
 
 The file is saved into --output DIR (created if missing) under the name
-'<MSG_ID>_<original filename>', sanitized; media without a name (photos,
-voice messages) gets a generated name such as '555_photo.jpg'. The name is
-deterministic and an existing file is silently overwritten, so re-running
-the same download is idempotent. The exact absolute path is printed in the
+'<CHAT_ID>_<MSG_ID>_<original filename>', sanitized; media without a name
+(photos, voice messages) gets a generated name such as
+'-1001234567890_555_photo.jpg'. The name is deterministic and an existing
+file is silently overwritten, so re-running the same download is idempotent;
+the CHAT_ID prefix keeps downloads from different chats apart even in a
+shared output directory. The exact absolute path is printed in the
 output. Media with unknown size is refused because --max-size cannot be
 checked before the transfer.
 """

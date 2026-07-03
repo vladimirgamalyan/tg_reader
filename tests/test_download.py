@@ -81,7 +81,7 @@ async def test_download_saves_file_and_reports_it(tmp_path):
 
     result = await download_to_dir(client, -100123, 555, output_dir, max_size_mb=100)
 
-    target = output_dir / "555_report.pdf"
+    target = output_dir / "-100123_555_report.pdf"
     assert target.read_bytes() == b"data"
     assert result == {
         "message_id": 555,
@@ -89,18 +89,30 @@ async def test_download_saves_file_and_reports_it(tmp_path):
         "file": str(target.resolve()),
         "size_bytes": 4,
     }
-    assert not (output_dir / "555_report.pdf.part").exists()
+    assert not (output_dir / "-100123_555_report.pdf.part").exists()
     client.get_messages.assert_awaited_once_with("input-entity", ids=555)
 
 
 async def test_download_overwrites_existing_file(tmp_path):
     client = make_client(make_media_message(), payload=b"new content")
-    target = tmp_path / "555_report.pdf"
+    target = tmp_path / "-100123_555_report.pdf"
     target.write_bytes(b"old content")
 
     await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
 
     assert target.read_bytes() == b"new content"
+
+
+async def test_download_same_msg_id_from_different_chats_does_not_collide(tmp_path):
+    # Message IDs are only unique within one chat: downloading msg 555 from
+    # two chats into one directory must produce two files.
+    client = make_client(make_media_message())
+
+    await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+    await download_to_dir(client, -100456, 555, tmp_path, max_size_mb=100)
+
+    assert (tmp_path / "-100123_555_report.pdf").exists()
+    assert (tmp_path / "-100456_555_report.pdf").exists()
 
 
 async def test_download_message_not_found(tmp_path):
@@ -195,7 +207,7 @@ async def test_run_download_returns_summary(config_dir, tmp_path, mocker):
     result = await run_download(-100123, 555, output_dir, max_size_mb=100)
 
     assert result["message_id"] == 555
-    assert (output_dir / "555_report.pdf").exists()
+    assert (output_dir / "-100123_555_report.pdf").exists()
     client.disconnect.assert_awaited_once()
 
 

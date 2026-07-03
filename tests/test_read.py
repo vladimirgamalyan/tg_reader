@@ -13,7 +13,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon import utils
-from telethon.errors import FloodWaitError, TimedOutError
+from telethon.errors import (
+    AuthKeyUnregisteredError,
+    FloodWaitError,
+    TimedOutError,
+)
 from telethon.sessions import MemorySession
 from telethon.tl.types import (
     Document,
@@ -296,6 +300,19 @@ async def test_run_read_corrupt_config_asks_for_auth(config_dir, mocker):
         await run_read(-1001234567890, limit=1, offset_id=0)
 
     client_class.assert_not_called()
+
+
+async def test_run_read_revoked_session_asks_for_auth(config_dir, mocker):
+    # A session invalidated mid-use (revoked, expired, copied to another
+    # machine) is permanent: the agent must be told to re-run auth, not
+    # to retry.
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = AuthKeyUnregisteredError(request=None)
+
+    with pytest.raises(NotAuthorizedError, match="tg-reader auth"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client.disconnect.assert_awaited_once()
 
 
 async def test_run_read_network_error_maps_to_retry_later(config_dir, mocker):

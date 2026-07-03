@@ -207,7 +207,7 @@ the specific messages that are worth fetching.
   {
     "message_id": 12345,
     "type": "document",
-    "file": "C:\\work\\in\\12345_report.pdf",
+    "file": "C:\\work\\in\\-1001234567890_12345_report.pdf",
     "size_bytes": 123456
   }
   ```
@@ -224,20 +224,22 @@ the specific messages that are worth fetching.
 Filenames of documents are attacker-controlled (the sender picks them), so
 they are never used verbatim:
 
-- The final name is `<msg_id>_<sanitized original name>`. Media without an
-  original name (photos, voice messages, video notes) gets a generated name:
-  `<msg_id>_<type>.<ext>` with the extension derived from the media type or
-  MIME type (e.g. `12345_photo.jpg`).
-- Sanitization: path separators and Windows-forbidden characters
-  (`<>:"/\|?*`, control chars) are replaced, trailing dots/spaces are stripped,
-  overly long names are truncated preserving the extension (the cap is counted
-  in UTF-8 bytes, matching filesystem name limits). The `<msg_id>_` prefix also
-  neutralizes Windows reserved device names (`CON`, `NUL`, ...), because the
-  base name never equals the reserved word.
+- The final name is `<chat_id>_<msg_id>_<sanitized original name>`. Media
+  without an original name (photos, voice messages, video notes) gets a
+  generated name: `<chat_id>_<msg_id>_<type>.<ext>` with the extension derived
+  from the media type or MIME type (e.g. `-1001234567890_12345_photo.jpg`).
+- Sanitization: path separators, Windows-forbidden characters (`<>:"/\|?*`,
+  control chars) and invisible Unicode (zero-width and bidi-control
+  characters, which can visually spoof the extension) are replaced, trailing
+  dots/spaces are stripped, overly long names are truncated preserving the
+  extension (the cap is counted in UTF-8 bytes, matching filesystem name
+  limits). The numeric prefix also neutralizes Windows reserved device names
+  (`CON`, `NUL`, ...), because the base name never equals the reserved word.
 - The name is deterministic and an existing file is silently overwritten:
-  re-running the same download is idempotent (same message — same path, same
-  content), and the `<msg_id>_` prefix rules out collisions between
-  different messages.
+  re-running the same download is idempotent (same arguments — same path,
+  same content). Message IDs are only unique within one chat, so the prefix
+  includes the chat ID: messages from different chats cannot collide even in
+  a shared output directory.
 - Data is written to a `<name>.part` temporary file and renamed on success,
   so an interrupted run never leaves a half-written file under the final
   name.

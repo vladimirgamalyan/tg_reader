@@ -56,7 +56,7 @@ async def download_to_dir(
             f"the {max_size_mb} MB limit; pass --max-size to raise it."
         )
     output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / build_filename(msg_id, info)
+    target = output_dir / build_filename(chat_id, msg_id, info)
     part = target.with_name(target.name + ".part")
     try:
         downloaded = await client.download_media(message, file=str(part))
