@@ -9,7 +9,8 @@ from pathlib import Path
 
 from .auth import run_auth
 from .download import DEFAULT_MAX_SIZE_MB, DownloadError, run_download
-from .read import ChatNotFoundError, NotAuthorizedError, run_read
+from .read import ChatNotFoundError, run_read
+from .session import NotAuthorizedError
 from .throttle import MAX_LIMIT, RetryLaterError
 
 MAIN_DESCRIPTION = """\

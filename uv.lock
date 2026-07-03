@@ -192,7 +192,7 @@ dev = [
 requires-dist = [
     { name = "filelock", specifier = ">=3.29.5" },
     { name = "platformdirs", specifier = ">=4.10.0" },
-    { name = "telethon", specifier = ">=1.44.0" },
+    { name = "telethon", specifier = ">=1.44.0,<2" },
 ]
 
 [package.metadata.requires-dev]

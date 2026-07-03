@@ -148,7 +148,7 @@ def config_dir(tmp_path, monkeypatch):
 def make_connected_client(mocker, message):
     client = make_client(message)
     client.is_user_authorized.return_value = True
-    mocker.patch("tg_reader.download.TelegramClient", return_value=client)
+    mocker.patch("tg_reader.session.TelegramClient", return_value=client)
     return client
 
 
@@ -195,7 +195,7 @@ async def test_run_download_refuses_while_flood_wait_active(config_dir, tmp_path
     (config_dir / throttle.STATE_FILENAME).write_text(
         json.dumps({"flood_until": time.time() + 100}), encoding="utf-8"
     )
-    client_class = mocker.patch("tg_reader.download.TelegramClient")
+    client_class = mocker.patch("tg_reader.session.TelegramClient")
 
     with pytest.raises(RetryLaterError):
         await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)

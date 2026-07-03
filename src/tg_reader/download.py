@@ -4,11 +4,10 @@ import os
 from pathlib import Path
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
 
-from . import config, throttle
 from .media import build_filename, media_info
-from .read import NotAuthorizedError, resolve_chat
+from .read import resolve_chat
+from .session import telegram_session
 
 # Default --max-size value, in MB (MiB); protects an agent from
 # accidentally pulling a multi-GB video.
@@ -70,46 +69,10 @@ async def download_to_dir(
 async def run_download(
     chat_id: int, msg_id: int, output_dir: Path, max_size_mb: int
 ) -> dict:
-    """Entry point for the 'download' command: connect, download, summarize.
+    """Entry point for the 'download' command: one download inside a session.
 
-    Mirrors run_read: the whole session runs under the inter-process lock,
-    so Telegram is only ever accessed by one tg-reader process at a time
-    (a large download holds the lock for its whole duration by design).
+    A large download holds the inter-process lock for its whole duration by
+    design: one process talking to Telegram at a time.
     """
-    cfg = config.load_config()
-    if cfg is None:
-        raise NotAuthorizedError(
-            "No configuration found. Run 'tg-reader auth' first (interactive)."
-        )
-    lock = throttle.acquire_lock()
-    try:
-        throttle.check_flood_deadline()
-        throttle.pace()
-        client = TelegramClient(
-            str(config.session_path()),
-            cfg["api_id"],
-            cfg["api_hash"],
-            flood_sleep_threshold=throttle.FLOOD_SLEEP_THRESHOLD,
-        )
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                raise NotAuthorizedError(
-                    "Not authorized. Run 'tg-reader auth' first (interactive)."
-                )
-            return await download_to_dir(
-                client, chat_id, msg_id, output_dir, max_size_mb
-            )
-        except FloodWaitError as error:
-            throttle.record_flood_wait(error.seconds)
-            raise throttle.RetryLaterError(
-                "Telegram requested a flood wait", error.seconds
-            ) from error
-        except (ConnectionError, TimeoutError) as error:
-            raise throttle.RetryLaterError(
-                f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
-            ) from error
-        finally:
-            await client.disconnect()
-    finally:
-        lock.release()
+    async with telegram_session() as client:
+        return await download_to_dir(client, chat_id, msg_id, output_dir, max_size_mb)

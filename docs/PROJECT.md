@@ -300,6 +300,7 @@ src/tg_reader/
     __init__.py
     cli.py        # argparse: auth/read/download subcommands, --help texts
     auth.py       # authorization logic
+    session.py    # shared session scaffolding: lock, flood gate, connect, auth check
     read.py       # message reading logic
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic

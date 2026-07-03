@@ -27,13 +27,13 @@ from telethon.tl.types import (
 from tg_reader import config, throttle
 from tg_reader.read import (
     ChatNotFoundError,
-    NotAuthorizedError,
     candidate_peers,
     fetch_messages,
     message_to_dict,
     resolve_chat,
     run_read,
 )
+from tg_reader.session import NotAuthorizedError
 from tg_reader.throttle import RetryLaterError
 
 
@@ -236,11 +236,11 @@ def config_dir(tmp_path, monkeypatch):
 
 
 def make_connected_client(mocker):
-    """Patch TelegramClient in the read module and return the client mock."""
+    """Patch TelegramClient in the session module and return the client mock."""
     client = AsyncMock()
     client.session.get_input_entity = MagicMock(return_value="input-entity")
     client.is_user_authorized.return_value = True
-    mocker.patch("tg_reader.read.TelegramClient", return_value=client)
+    mocker.patch("tg_reader.session.TelegramClient", return_value=client)
     return client
 
 
@@ -270,7 +270,7 @@ async def test_run_read_flood_wait_persists_deadline(config_dir, mocker):
 
 async def test_run_read_corrupt_config_asks_for_auth(config_dir, mocker):
     (config_dir / config.CONFIG_FILENAME).write_text("{not json", encoding="utf-8")
-    client_class = mocker.patch("tg_reader.read.TelegramClient")
+    client_class = mocker.patch("tg_reader.session.TelegramClient")
 
     with pytest.raises(NotAuthorizedError):
         await run_read(-1001234567890, limit=1, offset_id=0)
@@ -292,7 +292,7 @@ async def test_run_read_refuses_while_flood_wait_active(config_dir, mocker):
     (config_dir / throttle.STATE_FILENAME).write_text(
         json.dumps({"flood_until": time.time() + 100}), encoding="utf-8"
     )
-    client_class = mocker.patch("tg_reader.read.TelegramClient")
+    client_class = mocker.patch("tg_reader.session.TelegramClient")
 
     with pytest.raises(RetryLaterError):
         await run_read(-1001234567890, limit=1, offset_id=0)

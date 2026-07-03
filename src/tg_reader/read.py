@@ -1,14 +1,10 @@
 """Message reading logic: chat ID resolution and message formatting."""
 
 from telethon import TelegramClient, utils
-from telethon.errors import FloodWaitError
 from telethon.tl.types import PeerChannel, PeerChat, PeerUser
 
-from . import config, media, throttle
-
-
-class NotAuthorizedError(Exception):
-    """Raised when the tool is used before 'tg-reader auth' has been run."""
+from . import media
+from .session import telegram_session
 
 
 class ChatNotFoundError(Exception):
@@ -79,44 +75,6 @@ async def fetch_messages(
 
 
 async def run_read(chat_id: int, limit: int, offset_id: int) -> list[dict]:
-    """Entry point for the 'read' command: connect, fetch, return dicts.
-
-    The whole session runs under the inter-process lock: Telegram is only
-    ever accessed by one tg-reader process at a time, and the SQLite session
-    file is never opened concurrently.
-    """
-    cfg = config.load_config()
-    if cfg is None:
-        raise NotAuthorizedError(
-            "No configuration found. Run 'tg-reader auth' first (interactive)."
-        )
-    lock = throttle.acquire_lock()
-    try:
-        throttle.check_flood_deadline()
-        throttle.pace()
-        client = TelegramClient(
-            str(config.session_path()),
-            cfg["api_id"],
-            cfg["api_hash"],
-            flood_sleep_threshold=throttle.FLOOD_SLEEP_THRESHOLD,
-        )
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                raise NotAuthorizedError(
-                    "Not authorized. Run 'tg-reader auth' first (interactive)."
-                )
-            return await fetch_messages(client, chat_id, limit, offset_id)
-        except FloodWaitError as error:
-            throttle.record_flood_wait(error.seconds)
-            raise throttle.RetryLaterError(
-                "Telegram requested a flood wait", error.seconds
-            ) from error
-        except (ConnectionError, TimeoutError) as error:
-            raise throttle.RetryLaterError(
-                f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
-            ) from error
-        finally:
-            await client.disconnect()
-    finally:
-        lock.release()
+    """Entry point for the 'read' command: one fetch inside a Telegram session."""
+    async with telegram_session() as client:
+        return await fetch_messages(client, chat_id, limit, offset_id)

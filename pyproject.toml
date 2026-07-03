@@ -6,7 +6,9 @@ requires-python = ">=3.14"
 dependencies = [
     "filelock>=3.29.5",
     "platformdirs>=4.10.0",
-    "telethon>=1.44.0",
+    # <2: resolve_chat relies on Telethon 1.x session internals
+    # (client.session.get_input_entity); v2 removes that interface.
+    "telethon>=1.44.0,<2",
 ]
 
 [project.scripts]
