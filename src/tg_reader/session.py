@@ -6,6 +6,7 @@ failures (FloodWait, network) to RetryLaterError. 'read' and 'download'
 only supply the work done inside the session.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from telethon import TelegramClient
@@ -25,9 +26,14 @@ class NotAuthorizedError(PermanentError):
     """Raised when the tool is used before 'tg-reader auth' has been run."""
 
 
+# When the connection dies mid-request and Telethon's automatic reconnect
+# fails, the pending request future receives the raw socket-level error, not
+# a ConnectionError: any OSError (e.g. socket.gaierror on DNS failure) or an
+# asyncio.IncompleteReadError (an EOFError subclass). OSError also covers
+# ConnectionError and TimeoutError.
 TRANSIENT_TELEGRAM_ERRORS = (
-    ConnectionError,
-    TimeoutError,
+    OSError,
+    asyncio.IncompleteReadError,
     ServerError,
     TimedOutError,
 )

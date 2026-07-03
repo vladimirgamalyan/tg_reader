@@ -5,7 +5,9 @@ replaced with AsyncMock (client coroutine methods) / MagicMock (plain
 attributes and async iterators).
 """
 
+import asyncio
 import json
+import socket
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -318,6 +320,32 @@ async def test_run_read_revoked_session_asks_for_auth(config_dir, mocker):
 async def test_run_read_network_error_maps_to_retry_later(config_dir, mocker):
     client = make_connected_client(mocker)
     client.connect.side_effect = ConnectionError("Connection to Telegram failed")
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_read_dns_failure_maps_to_retry_later(config_dir, mocker):
+    # When the connection dies mid-request and Telethon's reconnect fails,
+    # the pending request future receives the raw socket-level error (an
+    # OSError subclass that is not a ConnectionError), which must still be
+    # "temporarily unavailable", not a permanent failure.
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = socket.gaierror("getaddrinfo failed")
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_read_truncated_response_maps_to_retry_later(config_dir, mocker):
+    # Same mid-request death, but the connection was closed while reading:
+    # asyncio.IncompleteReadError is an EOFError subclass, not an OSError.
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = asyncio.IncompleteReadError(b"", 4)
 
     with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
         await run_read(-1001234567890, limit=1, offset_id=0)
