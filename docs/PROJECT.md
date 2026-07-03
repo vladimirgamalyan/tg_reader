@@ -67,8 +67,8 @@ For development inside a repo clone: `uv run tg-reader ...`.
 All utility files live in a per-user directory (resolved via `platformdirs`)
 and do not depend on the current working directory. The directory holds
 secrets (`api_hash`, the session file grants full account access), so on
-POSIX it is made private to the user (mode 0700) when the credentials are
-saved:
+POSIX it is made private to the user (mode 0700) every time the tool
+creates or touches it (i.e. on every run):
 
 - Windows: `%APPDATA%\tg-reader\`
 - Linux: `~/.config/tg-reader/`
@@ -94,12 +94,18 @@ tg-reader auth
 Run manually by the user (interactive input); this command is not intended
 for AI agents.
 
-- Prompts for `api_id` and `api_hash` (unless already present in the config)
-  and saves them to `config.json`.
+- Prompts for `api_id` and `api_hash` (unless already present in the config).
+  Newly entered credentials are saved to `config.json` only after they have
+  worked (the login reached an authorized session), so a typo is never
+  persisted.
 - If the session is already authorized: prints the logged-in account info and
   exits.
 - Otherwise runs the interactive login flow: phone number → confirmation code →
   2FA password (if enabled). On success the session file is created.
+- If the stored session is no longer valid (revoked from another device,
+  `AUTH_KEY_DUPLICATED`), the dead session file is deleted and the command
+  fails with a message to run `tg-reader auth` again; the next run then logs
+  in from scratch.
 - The network part runs under the same inter-process lock, flood-wait gate
   and pacing as the other commands, so the session file is never opened by
   two processes at once and an active Telegram flood wait is respected.
@@ -282,9 +288,9 @@ policy constants live at the top of the module.
   is checked against the metadata before any transfer starts. Media with
   unknown size is refused because the cap cannot be enforced safely.
 - **Downloads hold the lock** — a large download keeps the global lock for
-  its whole duration; concurrent `tg-reader` runs fail fast with exit code 2
-  until it finishes. This is intentional: one process talking to Telegram at
-  a time is the whole point of the lock.
+  its whole duration; a concurrent `tg-reader` run waits for the lock up to
+  30 s, then fails with exit code 2. This is intentional: one process talking
+  to Telegram at a time is the whole point of the lock.
 
 ## Testing
 

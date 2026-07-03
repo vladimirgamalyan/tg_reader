@@ -177,9 +177,9 @@ errors and exit codes:
      retry with the same arguments.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
-     Causes: another tg-reader run (downloads can take a while; any other
-     run fails fast meanwhile), a Telegram flood wait, or the network is
-     down.
+     Causes: another tg-reader run (downloads can take a while; a
+     concurrent run waits up to 30s for the lock, then fails), a Telegram
+     flood wait, or the network is down.
 
 flood protection (automatic, no configuration):
   Same as 'read': only one tg-reader process talks to Telegram at a time,
