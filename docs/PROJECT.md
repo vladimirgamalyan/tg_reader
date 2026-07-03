@@ -39,6 +39,13 @@ uv tool install git+<repo-url>     # puts the tg-reader command on PATH
 uv tool upgrade tg-reader          # upgrade
 ```
 
+From a local clone (installs the working tree, no push required):
+
+```
+uv tool install <path-to-repo>             # snapshot; reinstall after code changes
+uv tool install --editable <path-to-repo>  # changes apply without reinstall
+```
+
 Running without installation:
 
 ```
