@@ -58,6 +58,19 @@ def test_check_flood_deadline_active(config_dir):
     assert 0 < excinfo.value.retry_after <= 100
 
 
+def test_check_flood_deadline_impossible_deadline_is_capped(config_dir):
+    # A deadline further away than the longest real flood wait (backwards
+    # clock jump, damaged state file) must not lock the tool out forever.
+    write_state(config_dir, flood_until=time.time() + 10 * throttle.MAX_FLOOD_WAIT)
+
+    with pytest.raises(RetryLaterError) as excinfo:
+        throttle.check_flood_deadline()
+
+    assert excinfo.value.retry_after <= throttle.MAX_FLOOD_WAIT
+    flood_until = read_state(config_dir)["flood_until"]
+    assert flood_until <= time.time() + throttle.MAX_FLOOD_WAIT
+
+
 def test_check_flood_deadline_expired(config_dir):
     write_state(config_dir, flood_until=time.time() - 1)
 
@@ -119,6 +132,18 @@ def test_pace_after_recent_run_sleeps(config_dir, mocker):
 
     sleep.assert_called_once()
     assert 0 < sleep.call_args[0][0] <= throttle.MIN_INTERVAL
+
+
+def test_pace_future_timestamp_sleeps_at_most_min_interval(config_dir, mocker):
+    # A last_request_at in the future (backwards clock jump, damaged state
+    # file) must not stall the run for longer than the interval itself.
+    write_state(config_dir, last_request_at=time.time() + 3600)
+    sleep = mocker.patch("tg_reader.throttle.time.sleep")
+
+    throttle.pace()
+
+    sleep.assert_called_once()
+    assert sleep.call_args[0][0] <= throttle.MIN_INTERVAL
 
 
 def test_pace_after_old_run_does_not_sleep(config_dir, mocker):

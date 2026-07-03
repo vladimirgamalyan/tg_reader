@@ -29,6 +29,10 @@ FLOOD_SLEEP_THRESHOLD = 30
 # Retry hint, in seconds, reported when Telegram cannot be reached over
 # the network (a transient condition: exit code 2, not 1).
 NETWORK_RETRY_HINT = 30
+# Longest flood wait Telegram realistically assigns (one day). A persisted
+# deadline further in the future than this is impossible: the system clock
+# jumped backwards or the state file is damaged.
+MAX_FLOOD_WAIT = 86400
 # Upper bound for --limit: keeps one run to a single GetHistory request.
 MAX_LIMIT = 100
 
@@ -84,7 +88,14 @@ def acquire_lock() -> FileLock:
 
 def check_flood_deadline() -> None:
     """Refuse to run while a persisted Telegram flood wait is active."""
-    remaining = _load_state().get("flood_until", 0) - time.time()
+    state = _load_state()
+    remaining = state.get("flood_until", 0) - time.time()
+    if remaining > MAX_FLOOD_WAIT:
+        # An impossible deadline must not lock the tool out indefinitely:
+        # rewrite it as the maximum so it is guaranteed to expire.
+        remaining = MAX_FLOOD_WAIT
+        state["flood_until"] = time.time() + remaining
+        _save_state(state)
     if remaining > 0:
         raise RetryLaterError("Telegram flood wait is active", remaining)
 
@@ -97,7 +108,10 @@ def pace() -> None:
     state = _load_state()
     wait = state.get("last_request_at", 0) + MIN_INTERVAL - time.time()
     if wait > 0:
-        time.sleep(wait)
+        # A last_request_at in the future (backwards clock jump, damaged
+        # state file) must not stall the run - and the global lock - for
+        # longer than the pacing interval itself.
+        time.sleep(min(wait, MIN_INTERVAL))
     state["last_request_at"] = time.time()
     _save_state(state)
 
