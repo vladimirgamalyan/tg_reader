@@ -5,17 +5,17 @@
 A small CLI utility for reading messages from your own Telegram account
 (MTProto via Telethon). Designed to be used by AI agents.
 
-Installation:
+## Installation
 
-```
-uv tool install git+<repo-url>
+Ask your AI agent to install this utility by giving it the address of this page.
+
+Or install it manually:
+
+```sh
+uv tool install git+https://github.com/vladimirgamalyan/tg_reader.git
 ```
 
-From a local clone:
-
-```
-uv tool install <path-to-repo>
-```
+## Commands
 
 - `tg-reader auth` — one-time interactive authorization, run manually by the
   user (stores credentials and the session file)
