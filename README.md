@@ -8,7 +8,9 @@ respect Telegram's usage limits, avoiding flood and account bans.
 
 ## Installation
 
-Ask your AI agent to install this utility by giving it the address of this page.
+Give this prompt to your AI agent:
+
+> Install the tg-reader CLI from https://github.com/vladimirgamalyan/tg_reader
 
 Or install it manually:
 
