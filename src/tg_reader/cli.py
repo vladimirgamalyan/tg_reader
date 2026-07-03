@@ -93,8 +93,9 @@ output schema (JSON array on stdout, newest message first), each element:
     filename     str|null  original filename; null if unnamed (photos,
                            voice messages)
     mime_type    str|null  MIME type; null if unknown
-    size_bytes   int|null  file size; compare it against the --max-size
-                           limit of 'tg-reader download'
+    size_bytes   int|null  file size; null when Telegram does not expose it;
+                           compare it against the --max-size limit of
+                           'tg-reader download' (download refuses unknown size)
 
 albums (grouped media):
   An album (several photos/files sent together) is several separate
@@ -148,7 +149,8 @@ The file is saved into --output DIR (created if missing) under the name
 voice messages) gets a generated name such as '555_photo.jpg'. The name is
 deterministic and an existing file is silently overwritten, so re-running
 the same download is idempotent. The exact absolute path is printed in the
-output.
+output. Media with unknown size is refused because --max-size cannot be
+checked before the transfer.
 """
 
 DOWNLOAD_EPILOG = """\
@@ -168,9 +170,9 @@ errors and exit codes:
   All errors are printed to stderr; stdout stays empty.
   0  success
   1  permanent error: bad arguments, unknown chat, message not found,
-     message has no downloadable media, file exceeds --max-size (the error
-     names the actual size), not authorized. Do not retry with the same
-     arguments.
+     message has no downloadable media, file size is unknown, file exceeds
+     --max-size (the error names the actual size), not authorized. Do not
+     retry with the same arguments.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
      Causes: another tg-reader run (downloads can take a while; any other

@@ -44,7 +44,13 @@ async def download_to_dir(
     if info is None:
         raise DownloadError(f"Message {msg_id} has no downloadable media.")
     size = info["size_bytes"]
-    if size is not None and size > max_size_mb * _MB:
+    max_size_bytes = max_size_mb * _MB
+    if size is None:
+        raise DownloadError(
+            f"Media size of message {msg_id} is unknown, so it cannot be checked "
+            f"against the {max_size_mb} MB limit."
+        )
+    if size > max_size_bytes:
         raise DownloadError(
             f"Media of message {msg_id} is {size / _MB:.1f} MB, which exceeds "
             f"the {max_size_mb} MB limit; pass --max-size to raise it."
@@ -56,6 +62,13 @@ async def download_to_dir(
         downloaded = await client.download_media(message, file=str(part))
         if downloaded is None:
             raise DownloadError(f"Telegram returned no file for message {msg_id}.")
+        downloaded_size = part.stat().st_size
+        if downloaded_size > max_size_bytes:
+            raise DownloadError(
+                f"Downloaded media of message {msg_id} is "
+                f"{downloaded_size / _MB:.1f} MB, which exceeds the "
+                f"{max_size_mb} MB limit."
+            )
         os.replace(part, target)
     finally:
         part.unlink(missing_ok=True)

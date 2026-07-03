@@ -26,6 +26,14 @@ def candidate_peers(chat_id: int) -> list:
     return [PeerUser(chat_id), PeerChannel(chat_id), PeerChat(chat_id)]
 
 
+def _is_cached_peer_chat(client: TelegramClient, peer: PeerChat) -> bool:
+    """Return whether a small group peer is present in Telethon's entity cache."""
+    get_rows = getattr(client.session, "get_entity_rows_by_id", None)
+    if get_rows is None:
+        return False
+    return get_rows(utils.get_peer_id(peer), exact=True) is not None
+
+
 async def resolve_chat(client: TelegramClient, chat_id: int):
     """Resolve a numeric chat ID to an input entity.
 
@@ -39,6 +47,11 @@ async def resolve_chat(client: TelegramClient, chat_id: int):
     """
     peers = candidate_peers(chat_id)
     for peer in peers:
+        if isinstance(peer, PeerChat) and not _is_cached_peer_chat(client, peer):
+            # Telethon can build InputPeerChat from a bare PeerChat ID without
+            # consulting the entity cache. Treat that as a cache miss so raw
+            # positive IDs still get disambiguated through the dialog list.
+            continue
         try:
             return client.session.get_input_entity(peer)
         except ValueError:

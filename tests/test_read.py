@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telethon import utils
 from telethon.errors import FloodWaitError, TimedOutError
+from telethon.sessions import MemorySession
 from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
@@ -130,7 +131,7 @@ async def test_resolve_chat_falls_back_to_dialogs():
 
 async def test_resolve_chat_raw_id_matches_channel_dialog():
     client = AsyncMock()
-    client.session.get_input_entity = MagicMock(side_effect=ValueError)
+    client.session = MemorySession()
     marked_id = utils.get_peer_id(PeerChannel(456))
     dialogs = [SimpleNamespace(id=marked_id, input_entity="channel-input-entity")]
     client.iter_dialogs = MagicMock(return_value=async_iter(dialogs))
@@ -138,6 +139,16 @@ async def test_resolve_chat_raw_id_matches_channel_dialog():
     result = await resolve_chat(client, 456)
 
     assert result == "channel-input-entity"
+    client.iter_dialogs.assert_called_once()
+
+
+async def test_resolve_chat_raw_id_not_found_with_real_session():
+    client = AsyncMock()
+    client.session = MemorySession()
+    client.iter_dialogs = MagicMock(return_value=async_iter([]))
+
+    with pytest.raises(ChatNotFoundError):
+        await resolve_chat(client, 456)
 
 
 async def test_resolve_chat_not_found():

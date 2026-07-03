@@ -155,8 +155,10 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   - `filename` — original filename as sent, or `null` when the media has no
     name (photos, voice messages);
   - `mime_type` — MIME type, or `null` when unknown;
-  - `size_bytes` — file size (for photos: the largest available variant);
-    pass it against the `download` size cap.
+  - `size_bytes` — file size (for photos: the largest available variant), or
+    `null` when Telegram does not expose a usable size. `download` refuses
+    unknown-size media because it cannot enforce `--max-size` before the
+    transfer starts.
 
 - Errors go to stderr; stdout stays empty. Exit codes:
   - `0` — success;
@@ -194,7 +196,8 @@ the specific messages that are worth fetching.
 - `--max-size MB` — refuse to download files larger than this (default:
   100). Protects an agent from accidentally pulling a multi-GB video; the
   error names the actual file size so the agent can retry with an explicit
-  higher limit.
+  higher limit. Media with unknown size is refused for the same reason: the
+  limit cannot be checked before downloading.
 - The message is re-fetched at download time: Telegram file references
   expire after a few hours, so downloading cannot rely on data captured by
   an earlier `read` run.
@@ -212,9 +215,9 @@ the specific messages that are worth fetching.
   `file` is the absolute path of the downloaded file.
 - Errors go to stderr with the same exit-code contract as `read`: `1` for
   permanent errors (unknown chat, message not found, message has no
-  downloadable media, file exceeds the size cap), `2` for "temporarily
-  unavailable, retry after Ns" (lock held by another process, active flood
-  wait, network down).
+  downloadable media, file size is unknown, file exceeds the size cap), `2`
+  for "temporarily unavailable, retry after Ns" (lock held by another process,
+  active flood wait, network down).
 
 #### File naming
 
@@ -226,10 +229,11 @@ they are never used verbatim:
   `<msg_id>_<type>.<ext>` with the extension derived from the media type or
   MIME type (e.g. `12345_photo.jpg`).
 - Sanitization: path separators and Windows-forbidden characters
-  (`<>:"/\|?*`, control chars) are replaced, reserved device names (`CON`,
-  `NUL`, ...) are prefixed, trailing dots/spaces are stripped, overly long
-  names are truncated preserving the extension (the cap is counted in UTF-8
-  bytes, matching filesystem name limits).
+  (`<>:"/\|?*`, control chars) are replaced, trailing dots/spaces are stripped,
+  overly long names are truncated preserving the extension (the cap is counted
+  in UTF-8 bytes, matching filesystem name limits). The `<msg_id>_` prefix also
+  neutralizes Windows reserved device names (`CON`, `NUL`, ...), because the
+  base name never equals the reserved word.
 - The name is deterministic and an existing file is silently overwritten:
   re-running the same download is idempotent (same message — same path, same
   content), and the `<msg_id>_` prefix rules out collisions between
@@ -273,7 +277,8 @@ policy constants live at the top of the module.
   one GetHistory request. Downloads are inherently unbounded in request
   count (a file is fetched in ~512 KB chunks, one GetFile request each), so
   the analogue is the size cap: `--max-size` defaults to 100 MB and refusal
-  is checked against the metadata before any transfer starts.
+  is checked against the metadata before any transfer starts. Media with
+  unknown size is refused because the cap cannot be enforced safely.
 - **Downloads hold the lock** — a large download keeps the global lock for
   its whole duration; concurrent `tg-reader` runs fail fast with exit code 2
   until it finishes. This is intentional: one process talking to Telegram at

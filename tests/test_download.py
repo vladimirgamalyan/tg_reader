@@ -17,6 +17,9 @@ from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
     MessageMediaDocument,
+    MessageMediaPhoto,
+    Photo,
+    PhotoStrippedSize,
 )
 
 from tg_reader import config, throttle
@@ -40,10 +43,25 @@ def make_media_message(msg_id=555, size=1000, filename="report.pdf"):
     return SimpleNamespace(id=msg_id, media=MessageMediaDocument(document=document))
 
 
+def make_unknown_size_photo_message(msg_id=555):
+    photo = Photo(
+        id=1,
+        access_hash=2,
+        file_reference=b"",
+        date=datetime(2026, 7, 3, tzinfo=timezone.utc),
+        sizes=[PhotoStrippedSize(type="i", bytes=b"tiny")],
+        dc_id=2,
+    )
+    return SimpleNamespace(id=msg_id, media=MessageMediaPhoto(photo=photo))
+
+
 def make_client(message, payload=b"data"):
     """Client mock whose download_media writes payload to the target file."""
     client = AsyncMock()
-    client.session.get_input_entity = MagicMock(return_value="input-entity")
+    client.session = SimpleNamespace(
+        get_input_entity=MagicMock(return_value="input-entity"),
+        get_entity_rows_by_id=MagicMock(return_value=(-100123, 0)),
+    )
     client.get_messages.return_value = message
 
     async def fake_download(message, file):
@@ -106,6 +124,24 @@ async def test_download_refuses_oversized_file(tmp_path):
         await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
 
     client.download_media.assert_not_called()
+
+
+async def test_download_refuses_unknown_size_file(tmp_path):
+    client = make_client(make_unknown_size_photo_message())
+
+    with pytest.raises(DownloadError, match="size.*unknown"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    client.download_media.assert_not_called()
+
+
+async def test_download_refuses_oversized_actual_file(tmp_path):
+    client = make_client(make_media_message(size=1000), payload=b"x" * (2 * MB))
+
+    with pytest.raises(DownloadError, match=r"2\.0 MB"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=1)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_download_no_file_returned_is_permanent_error(tmp_path):
