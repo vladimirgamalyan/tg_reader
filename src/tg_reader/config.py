@@ -36,7 +36,7 @@ def load_config() -> dict | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     if not isinstance(data, dict) or "api_id" not in data or "api_hash" not in data:
         return None

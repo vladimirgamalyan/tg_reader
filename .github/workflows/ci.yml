@@ -23,6 +23,7 @@ jobs:
         run: |
           uv sync --locked
           uv run ruff check
+          uv run ruff format --check
           uv run pytest
       # Users install straight from git, so the packaging and the entry
       # point are part of the contract: build and run the tool the same

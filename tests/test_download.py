@@ -191,7 +191,9 @@ async def test_run_download_network_error_maps_to_retry_later(
     client.disconnect.assert_awaited_once()
 
 
-async def test_run_download_refuses_while_flood_wait_active(config_dir, tmp_path, mocker):
+async def test_run_download_refuses_while_flood_wait_active(
+    config_dir, tmp_path, mocker
+):
     (config_dir / throttle.STATE_FILENAME).write_text(
         json.dumps({"flood_until": time.time() + 100}), encoding="utf-8"
     )

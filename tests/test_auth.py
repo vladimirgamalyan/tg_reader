@@ -34,17 +34,23 @@ def make_client(mocker):
     return client
 
 
-def test_load_or_prompt_credentials_hides_api_hash(tmp_path, monkeypatch, capsys, mocker):
+def test_load_or_prompt_credentials_hides_api_hash(
+    tmp_path, monkeypatch, capsys, mocker
+):
     monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
     monkeypatch.setattr("builtins.input", lambda prompt: "123")
     getpass = mocker.patch("tg_reader.auth.getpass.getpass", return_value=" hash ")
 
-    assert _load_or_prompt_credentials() == (123, "hash")
+    assert _load_or_prompt_credentials() == (123, "hash", True)
 
     getpass.assert_called_once_with("api_hash: ")
     output = capsys.readouterr().out
     assert "api_hash input will not be displayed while you type." in output
-    assert config.load_config() == {"api_id": 123, "api_hash": "hash"}
+    assert config.load_config() is None
+
+
+def test_load_or_prompt_credentials_reports_stored_credentials(config_dir):
+    assert _load_or_prompt_credentials() == (1, "hash", False)
 
 
 async def test_run_auth_holds_lock_around_the_session(config_dir, mocker):
@@ -67,10 +73,46 @@ async def test_run_auth_releases_lock_on_failure(config_dir, mocker):
     lock = MagicMock()
     mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
         await run_auth()
 
     lock.release.assert_called_once()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_auth_saves_prompted_credentials_after_success(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "123")
+    mocker.patch("tg_reader.auth.getpass.getpass", return_value=" hash ")
+    client = make_client(mocker)
+    client.is_user_authorized.return_value = False
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    await run_auth()
+
+    assert config.load_config() == {"api_id": 123, "api_hash": "hash"}
+    client.start.assert_awaited_once()
+
+
+async def test_run_auth_does_not_save_prompted_credentials_on_login_failure(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "123")
+    mocker.patch("tg_reader.auth.getpass.getpass", return_value=" hash ")
+    client = make_client(mocker)
+    client.is_user_authorized.return_value = False
+    client.start.side_effect = RuntimeError("bad login")
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(RuntimeError, match="bad login"):
+        await run_auth()
+
+    assert config.load_config() is None
 
 
 async def test_run_auth_refuses_while_flood_wait_active(config_dir, mocker):

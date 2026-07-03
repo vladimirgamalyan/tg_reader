@@ -293,8 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MB",
         type=max_size_type,
         default=DEFAULT_MAX_SIZE_MB,
-        help="refuse to download files larger than this many MB "
-        "(default: %(default)s)",
+        help="refuse to download files larger than this many MB (default: %(default)s)",
     )
     return parser
 

@@ -55,7 +55,7 @@ def _load_state() -> dict:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         # A state file damaged e.g. by a killed process must not brick the
         # tool; losing throttle state is harmless.
         return {}

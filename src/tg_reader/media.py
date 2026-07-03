@@ -53,9 +53,7 @@ def media_info(media) -> dict | None:
             "mime_type": "image/jpeg",
             "size_bytes": _photo_size_bytes(media.photo),
         }
-    if isinstance(media, MessageMediaDocument) and isinstance(
-        media.document, Document
-    ):
+    if isinstance(media, MessageMediaDocument) and isinstance(media.document, Document):
         document = media.document
         return {
             "type": _document_type(document),
