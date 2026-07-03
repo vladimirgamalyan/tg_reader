@@ -79,6 +79,25 @@ def test_record_flood_wait(config_dir):
     assert before + 60 <= flood_until <= time.time() + 60
 
 
+def test_record_flood_wait_preserves_old_state_when_temp_write_fails(
+    config_dir, mocker
+):
+    write_state(config_dir, flood_until=12345.0)
+    original_write_text = type(config_dir).write_text
+
+    def fail_temp_write(path, *args, **kwargs):
+        if path.name == f"{throttle.STATE_FILENAME}.tmp":
+            raise OSError("disk full")
+        return original_write_text(path, *args, **kwargs)
+
+    mocker.patch.object(type(config_dir), "write_text", fail_temp_write)
+
+    with pytest.raises(OSError, match="disk full"):
+        throttle.record_flood_wait(60)
+
+    assert read_state(config_dir)["flood_until"] == 12345.0
+
+
 # --- pacing ---
 
 

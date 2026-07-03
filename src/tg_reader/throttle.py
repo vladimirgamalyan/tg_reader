@@ -63,7 +63,10 @@ def _load_state() -> dict:
 
 def _save_state(state: dict) -> None:
     config.ensure_config_dir()
-    _state_path().write_text(json.dumps(state) + "\n", encoding="utf-8")
+    path = _state_path()
+    temp_path = path.with_name(path.name + ".tmp")
+    temp_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    temp_path.replace(path)
 
 
 def acquire_lock() -> FileLock:
