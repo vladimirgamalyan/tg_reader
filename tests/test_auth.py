@@ -9,7 +9,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, ServerError
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
@@ -70,6 +70,21 @@ async def test_run_auth_holds_lock_around_the_session(config_dir, mocker):
 async def test_run_auth_releases_lock_on_failure(config_dir, mocker):
     client = make_client(mocker)
     client.connect.side_effect = ConnectionError("boom")
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_auth()
+
+    lock.release.assert_called_once()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_auth_rpc_server_error_maps_to_retry_later(config_dir, mocker):
+    client = make_client(mocker)
+    client.get_me.side_effect = ServerError(
+        request=None, message="server error", code=500
+    )
     lock = MagicMock()
     mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
 

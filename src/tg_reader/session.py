@@ -9,7 +9,7 @@ only supply the work done inside the session.
 from contextlib import asynccontextmanager
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, ServerError, TimedOutError
 
 from . import config, throttle
 from .errors import PermanentError
@@ -17,6 +17,21 @@ from .errors import PermanentError
 
 class NotAuthorizedError(PermanentError):
     """Raised when the tool is used before 'tg-reader auth' has been run."""
+
+
+TRANSIENT_TELEGRAM_ERRORS = (
+    ConnectionError,
+    TimeoutError,
+    ServerError,
+    TimedOutError,
+)
+
+
+def retry_later_from_transient_error(error: BaseException) -> throttle.RetryLaterError:
+    """Map network and transient Telegram RPC errors to the retry contract."""
+    return throttle.RetryLaterError(
+        f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
+    )
 
 
 @asynccontextmanager
@@ -54,10 +69,8 @@ async def telegram_session():
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
             ) from error
-        except (ConnectionError, TimeoutError) as error:
-            raise throttle.RetryLaterError(
-                f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
-            ) from error
+        except TRANSIENT_TELEGRAM_ERRORS as error:
+            raise retry_later_from_transient_error(error) from error
         finally:
             await client.disconnect()
     finally:

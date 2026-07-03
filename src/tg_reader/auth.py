@@ -6,6 +6,7 @@ from telethon import TelegramClient, utils
 from telethon.errors import FloodWaitError
 
 from . import config, throttle
+from .session import TRANSIENT_TELEGRAM_ERRORS, retry_later_from_transient_error
 
 
 def _prompt_api_id() -> int:
@@ -79,10 +80,8 @@ async def run_auth() -> None:
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
             ) from error
-        except (ConnectionError, TimeoutError) as error:
-            raise throttle.RetryLaterError(
-                f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
-            ) from error
+        except TRANSIENT_TELEGRAM_ERRORS as error:
+            raise retry_later_from_transient_error(error) from error
         finally:
             await client.disconnect()
     finally:

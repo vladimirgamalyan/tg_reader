@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon import utils
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, TimedOutError
 from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
@@ -290,6 +290,18 @@ async def test_run_read_corrupt_config_asks_for_auth(config_dir, mocker):
 async def test_run_read_network_error_maps_to_retry_later(config_dir, mocker):
     client = make_connected_client(mocker)
     client.connect.side_effect = ConnectionError("Connection to Telegram failed")
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_read_rpc_timeout_maps_to_retry_later(config_dir, mocker):
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = TimedOutError(
+        request=None, message="timed out", code=500
+    )
 
     with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
         await run_read(-1001234567890, limit=1, offset_id=0)
