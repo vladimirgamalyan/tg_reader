@@ -27,6 +27,7 @@ real-time monitoring.
 - Python 3.14, managed with `uv`
 - [Telethon](https://docs.telethon.dev/) — MTProto client
 - platformdirs — user data directory resolution
+- filelock — inter-process lock for the flood protection layer
 - pytest + pytest-asyncio + pytest-mock — tests (no network, mocked client)
 
 ## Installation and usage on the end user's machine
@@ -58,6 +59,9 @@ Directory contents:
 
 - `config.json` — `api_id` and `api_hash`; created by the `auth` command
 - `tg_reader.session` — Telethon session file; created by the `auth` command
+- `throttle.json` — flood protection state (last run timestamp, active
+  FloodWait deadline); created and managed automatically
+- `tg_reader.lock` — inter-process lock file; created automatically
 
 Credentials are obtained at <https://my.telegram.org> → "API development tools".
 
@@ -87,7 +91,8 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
 
 - `CHAT_ID` — numeric chat/channel/user ID. Both raw MTProto IDs and
   Bot-API-style `-100...` IDs are accepted.
-- `--limit N` — number of messages to fetch (default: 20).
+- `--limit N` — number of messages to fetch, 1..100 (default: 20). The cap
+  keeps one run to a single GetHistory API request.
 - `--offset-id MSG_ID` — fetch messages older than this message ID (manual
   pagination).
 - Output: a JSON array on stdout, newest message first. Each element:
@@ -102,8 +107,14 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   }
   ```
 
-- Errors go to stderr with a non-zero exit code. Special case: running
-  without authorization fails with a hint to run `tg-reader auth`.
+- Errors go to stderr; stdout stays empty. Exit codes:
+  - `0` — success;
+  - `1` — permanent error, do not retry with the same arguments (bad
+    arguments, unknown chat, not authorized — the latter with a hint to run
+    `tg-reader auth`);
+  - `2` — temporarily unavailable, the stderr message ends with
+    `retry after Ns`: wait and retry (another process holds the lock, or a
+    Telegram flood wait is active).
 - `--help` (on both `tg-reader` and its subcommands) — a self-sufficient help
   text aimed at an AI agent: the utility's purpose, all arguments, accepted
   `CHAT_ID` formats, the JSON output schema with field descriptions, usage
@@ -122,13 +133,37 @@ automatically:
 3. If still not found, exit with a clear error — the account must actually be
    a member of the chat.
 
+## Flood protection
+
+Reading history is a low-risk operation, but ignoring server-assigned
+FLOOD_WAIT penalties is the main way accounts get escalating restrictions.
+The protection layer (`throttle.py`) is automatic and not configurable;
+policy constants live at the top of the module.
+
+- **Inter-process lock** — the whole `read` run (connect → fetch →
+  disconnect) executes under a global file lock, so only one `tg-reader`
+  process talks to Telegram at a time and the SQLite session file is never
+  opened concurrently. A second process waits up to 30 s, then fails with
+  exit code 2.
+- **FloodWait handling** — waits up to 30 s are slept through in place
+  (Telethon's `flood_sleep_threshold`). Longer waits abort the run and the
+  deadline is persisted to `throttle.json`; until it expires, every run
+  fails fast with exit code 2 without touching the network, so retries and
+  parallel callers cannot escalate the penalty.
+- **Pacing** — consecutive runs are spaced at least 2 s apart (the process
+  sleeps under the lock), smoothing out bursts from a misbehaving caller.
+- **Bounded requests** — `--limit` is capped at 100, so one run costs one
+  GetHistory request.
+
 ## Testing
 
 Unit tests only, no network. The Telethon client is passed into the logic
 functions as an argument (dependency injection) and replaced with `AsyncMock`
-in tests — see `tests/test_telethon_example.py` for the pattern. Coverage
+in tests — see `tests/test_read.py` for the pattern. Coverage
 targets: ID normalization, entity resolution fallback, message-to-dict
-formatting.
+formatting, flood protection (FloodWait deadline persistence, pacing, lock
+behavior — `time.sleep` is mocked, the config directory is redirected to a
+temporary path).
 
 ## Layout
 
@@ -140,10 +175,8 @@ src/tg_reader/
     cli.py        # argparse: auth/read subcommands, --help texts
     auth.py       # authorization logic
     read.py       # message reading logic
+    throttle.py   # flood protection: lock, FloodWait state, pacing
     config.py     # user directory, config.json load/save
 docs/PROJECT.md   # this file
 tests/
 ```
-
-`main.py` is a leftover IDE placeholder and will be removed when the package
-is added.
