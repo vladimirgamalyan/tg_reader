@@ -12,9 +12,10 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 
 from . import config, throttle
+from .errors import PermanentError
 
 
-class NotAuthorizedError(Exception):
+class NotAuthorizedError(PermanentError):
     """Raised when the tool is used before 'tg-reader auth' has been run."""
 
 

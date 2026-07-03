@@ -5,6 +5,7 @@ from pathlib import Path
 
 from telethon import TelegramClient
 
+from .errors import PermanentError
 from .media import build_filename, media_info
 from .read import resolve_chat
 from .session import telegram_session
@@ -16,7 +17,7 @@ DEFAULT_MAX_SIZE_MB = 100
 _MB = 1024 * 1024
 
 
-class DownloadError(Exception):
+class DownloadError(PermanentError):
     """Raised when the message cannot provide the requested file (permanent)."""
 
 

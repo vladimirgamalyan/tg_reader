@@ -24,6 +24,11 @@ A single `tg-reader` command with three subcommands:
 Non-goals for now: sending messages, full history export, real-time
 monitoring.
 
+There is deliberately no chat-discovery command in the first versions: the
+numeric `CHAT_ID` must be obtained out of band (e.g. from a Telegram client).
+A `chats` subcommand listing the account's dialogs with their IDs is planned
+for a later version.
+
 ## Stack
 
 - Python 3.14, managed with `uv`
@@ -95,8 +100,9 @@ for AI agents.
   exits.
 - Otherwise runs the interactive login flow: phone number → confirmation code →
   2FA password (if enabled). On success the session file is created.
-- The network part runs under the same inter-process lock as the other
-  commands, so the session file is never opened by two processes at once.
+- The network part runs under the same inter-process lock, flood-wait gate
+  and pacing as the other commands, so the session file is never opened by
+  two processes at once and an active Telegram flood wait is respected.
 
 ### tg-reader read
 
@@ -119,6 +125,7 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
     "sender_id": 111222333,
     "sender_name": "John Doe",
     "text": "message text or media caption; null if none",
+    "reply_to_msg_id": 12340,
     "grouped_id": 13579246812345678,
     "media": {
       "type": "document",
@@ -129,6 +136,8 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   }
   ```
 
+- `reply_to_msg_id` — ID of the message this one replies to; `null` when the
+  message is not a reply.
 - `grouped_id` — shared album ID. An album (several photos/files sent
   together) is several separate messages, each with its own `id` and its own
   `media`; the caption is carried by only one of them. Clients render such
@@ -305,6 +314,7 @@ src/tg_reader/
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic
     throttle.py   # flood protection: lock, FloodWait state, pacing
+    errors.py     # PermanentError: base class for exit-code-1 failures
     config.py     # user directory, config.json load/save
 docs/PROJECT.md   # this file
 tests/

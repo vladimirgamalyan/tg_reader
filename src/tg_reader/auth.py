@@ -1,6 +1,7 @@
 """Interactive authorization: collect API credentials and log in."""
 
 from telethon import TelegramClient, utils
+from telethon.errors import FloodWaitError
 
 from . import config, throttle
 
@@ -30,14 +31,23 @@ def _load_or_prompt_credentials() -> tuple[int, str]:
 async def run_auth() -> None:
     """Entry point for the 'auth' command: interactive one-time login.
 
-    The network part runs under the same inter-process lock as 'read' and
-    'download': the SQLite session file must never be opened by two
-    processes at once. Credentials are prompted for before taking the lock.
+    The network part runs under the same inter-process lock, flood-wait
+    gate and pacing as 'read' and 'download': the SQLite session file must
+    never be opened by two processes at once, and an active Telegram flood
+    wait is respected here too. Credentials are prompted for before taking
+    the lock.
     """
     api_id, api_hash = _load_or_prompt_credentials()
     lock = throttle.acquire_lock()
     try:
-        client = TelegramClient(str(config.session_path()), api_id, api_hash)
+        throttle.check_flood_deadline()
+        throttle.pace()
+        client = TelegramClient(
+            str(config.session_path()),
+            api_id,
+            api_hash,
+            flood_sleep_threshold=throttle.FLOOD_SLEEP_THRESHOLD,
+        )
         await client.connect()
         try:
             if await client.is_user_authorized():
@@ -51,6 +61,11 @@ async def run_auth() -> None:
             me = await client.get_me()
             print(f"Authorized as {utils.get_display_name(me)} (id={me.id}).")
             print(f"Session stored at {config.session_path()}")
+        except FloodWaitError as error:
+            throttle.record_flood_wait(error.seconds)
+            raise throttle.RetryLaterError(
+                "Telegram requested a flood wait", error.seconds
+            ) from error
         finally:
             await client.disconnect()
     finally:

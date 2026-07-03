@@ -8,9 +8,9 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 from .auth import run_auth
-from .download import DEFAULT_MAX_SIZE_MB, DownloadError, run_download
-from .read import ChatNotFoundError, run_read
-from .session import NotAuthorizedError
+from .download import DEFAULT_MAX_SIZE_MB, run_download
+from .errors import PermanentError
+from .read import run_read
 from .throttle import MAX_LIMIT, RetryLaterError
 
 MAIN_DESCRIPTION = """\
@@ -72,19 +72,22 @@ found, the command fails with an error on stderr.
 
 READ_EPILOG = """\
 output schema (JSON array on stdout, newest message first), each element:
-  id           int         message ID; pass it to --offset-id to paginate,
-                           or to 'tg-reader download' to fetch the media
-  date         str|null    ISO 8601 timestamp in UTC,
-                           e.g. "2026-07-03T12:34:56+00:00"
-  sender_id    int|null    numeric ID of the sender (marked format)
-  sender_name  str|null    display name of the sender
-  text         str|null    message text or media caption; null if none
-                           (service messages, media without caption)
-  grouped_id   int|null    album ID, see 'albums' below; null for
-                           standalone messages
-  media        obj|null    downloadable attachment metadata; null when the
-                           message has none (plain text, polls, geo,
-                           contacts; link previews do not count). Fields:
+  id               int       message ID; pass it to --offset-id to
+                             paginate, or to 'tg-reader download' to
+                             fetch the media
+  date             str|null  ISO 8601 timestamp in UTC,
+                             e.g. "2026-07-03T12:34:56+00:00"
+  sender_id        int|null  numeric ID of the sender (marked format)
+  sender_name      str|null  display name of the sender
+  text             str|null  message text or media caption; null if none
+                             (service messages, media without caption)
+  reply_to_msg_id  int|null  ID of the message this one replies to; null
+                             when the message is not a reply
+  grouped_id       int|null  album ID, see 'albums' below; null for
+                             standalone messages
+  media            obj|null  downloadable attachment metadata; null when
+                             the message has none (plain text, polls, geo,
+                             contacts; link previews do not count). Fields:
     type         str       photo|video|audio|voice|video_note|sticker|
                            gif|document
     filename     str|null  original filename; null if unnamed (photos,
@@ -321,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     except RetryLaterError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    except (NotAuthorizedError, ChatNotFoundError, DownloadError) as error:
+    except PermanentError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit

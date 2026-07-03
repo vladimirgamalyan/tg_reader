@@ -54,6 +54,7 @@ def make_message(**overrides):
         "sender_id": 111222333,
         "sender": User(id=111222333, first_name="John", last_name="Doe"),
         "message": "message text",
+        "reply_to_msg_id": None,
         "grouped_id": None,
         "media": None,
     }
@@ -159,6 +160,7 @@ def test_message_to_dict_all_fields():
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": "message text",
+        "reply_to_msg_id": None,
         "grouped_id": None,
         "media": None,
     }
@@ -174,6 +176,7 @@ def test_message_to_dict_nulls():
         "sender_id": None,
         "sender_name": None,
         "text": None,
+        "reply_to_msg_id": None,
         "grouped_id": None,
         "media": None,
     }
@@ -207,6 +210,12 @@ def test_message_to_dict_media_and_album():
 
 def test_message_to_dict_empty_text_is_null():
     assert message_to_dict(make_message(message=""))["text"] is None
+
+
+def test_message_to_dict_reply():
+    message = make_message(reply_to_msg_id=67890)
+
+    assert message_to_dict(message)["reply_to_msg_id"] == 67890
 
 
 # --- fetching ---

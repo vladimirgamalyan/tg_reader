@@ -4,10 +4,11 @@ from telethon import TelegramClient, utils
 from telethon.tl.types import PeerChannel, PeerChat, PeerUser
 
 from . import media
+from .errors import PermanentError
 from .session import telegram_session
 
 
-class ChatNotFoundError(Exception):
+class ChatNotFoundError(PermanentError):
     """Raised when a chat ID cannot be resolved to any known chat."""
 
 
@@ -60,6 +61,7 @@ def message_to_dict(message) -> dict:
         "sender_id": message.sender_id,
         "sender_name": utils.get_display_name(message.sender) or None,
         "text": message.message or None,
+        "reply_to_msg_id": message.reply_to_msg_id,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
     }
