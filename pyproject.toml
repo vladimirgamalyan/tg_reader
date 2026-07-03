@@ -1,6 +1,6 @@
 [project]
 name = "tg-reader"
-version = "0.2.0"
+version = "0.2.1"
 description = "CLI utility for reading messages from your own Telegram account, designed for AI agents"
 requires-python = ">=3.14"
 dependencies = [
@@ -21,8 +21,14 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-mock>=3.15.1",
+    "ruff>=0.15.20",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff.lint]
+# Default rules plus BLE (no blind 'except Exception'); the CLI boundary
+# in cli.py carries the one deliberate noqa.
+extend-select = ["BLE"]

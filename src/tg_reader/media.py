@@ -32,7 +32,9 @@ TYPE_EXTENSIONS = {
 }
 
 # Cap on the sanitized name (extension included), before the msg_id prefix.
-MAX_NAME_LENGTH = 100
+# Counted in UTF-8 bytes, not characters: filesystem limits (e.g. 255 bytes
+# per name on ext4) apply to bytes, and the name is sender-controlled.
+MAX_NAME_BYTES = 100
 
 _FORBIDDEN_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -124,12 +126,21 @@ def _sanitize(name: str) -> str:
     # Windows silently drops trailing dots and spaces; strip them ourselves
     # so the name on disk matches the name we report.
     name = name.strip().rstrip(". ")
-    if len(name) > MAX_NAME_LENGTH:
+    if len(name.encode("utf-8")) > MAX_NAME_BYTES:
         stem, extension = os.path.splitext(name)
         # An overlong "extension" is not a real one; keep it bounded too.
-        extension = extension[:20]
-        name = stem[: MAX_NAME_LENGTH - len(extension)] + extension
+        extension = _truncate_utf8(extension, 20)
+        stem = _truncate_utf8(stem, MAX_NAME_BYTES - len(extension.encode("utf-8")))
+        name = stem + extension
     return name
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """Truncate to at most max_bytes of UTF-8 without splitting a character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _extension(info: dict) -> str:

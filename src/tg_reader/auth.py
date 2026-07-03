@@ -2,7 +2,15 @@
 
 from telethon import TelegramClient, utils
 
-from . import config
+from . import config, throttle
+
+
+def _prompt_api_id() -> int:
+    while True:
+        try:
+            return int(input("api_id: "))
+        except ValueError:
+            print("api_id must be a number, try again.")
 
 
 def _load_or_prompt_credentials() -> tuple[int, str]:
@@ -12,7 +20,7 @@ def _load_or_prompt_credentials() -> tuple[int, str]:
         return cfg["api_id"], cfg["api_hash"]
     print("API credentials are required.")
     print("Get them at https://my.telegram.org -> 'API development tools'.")
-    api_id = int(input("api_id: "))
+    api_id = _prompt_api_id()
     api_hash = input("api_hash: ").strip()
     config.save_config(api_id, api_hash)
     print(f"Credentials saved to {config.config_path()}")
@@ -20,19 +28,30 @@ def _load_or_prompt_credentials() -> tuple[int, str]:
 
 
 async def run_auth() -> None:
-    """Entry point for the 'auth' command: interactive one-time login."""
+    """Entry point for the 'auth' command: interactive one-time login.
+
+    The network part runs under the same inter-process lock as 'read' and
+    'download': the SQLite session file must never be opened by two
+    processes at once. Credentials are prompted for before taking the lock.
+    """
     api_id, api_hash = _load_or_prompt_credentials()
-    client = TelegramClient(str(config.session_path()), api_id, api_hash)
-    await client.connect()
+    lock = throttle.acquire_lock()
     try:
-        if await client.is_user_authorized():
+        client = TelegramClient(str(config.session_path()), api_id, api_hash)
+        await client.connect()
+        try:
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                print(
+                    f"Already authorized as {utils.get_display_name(me)} (id={me.id})."
+                )
+                return
+            # Interactive login flow: phone number -> confirmation code -> 2FA password.
+            await client.start()
             me = await client.get_me()
-            print(f"Already authorized as {utils.get_display_name(me)} (id={me.id}).")
-            return
-        # Interactive login flow: phone number -> confirmation code -> 2FA password.
-        await client.start()
-        me = await client.get_me()
-        print(f"Authorized as {utils.get_display_name(me)} (id={me.id}).")
-        print(f"Session stored at {config.session_path()}")
+            print(f"Authorized as {utils.get_display_name(me)} (id={me.id}).")
+            print(f"Session stored at {config.session_path()}")
+        finally:
+            await client.disconnect()
     finally:
-        await client.disconnect()
+        lock.release()

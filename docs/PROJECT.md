@@ -31,6 +31,7 @@ monitoring.
 - platformdirs — user data directory resolution
 - filelock — inter-process lock for the flood protection layer
 - pytest + pytest-asyncio + pytest-mock — tests (no network, mocked client)
+- ruff — linter (default rules plus BLE)
 
 ## Installation and usage on the end user's machine
 
@@ -59,7 +60,10 @@ For development inside a repo clone: `uv run tg-reader ...`.
 ## Configuration
 
 All utility files live in a per-user directory (resolved via `platformdirs`)
-and do not depend on the current working directory:
+and do not depend on the current working directory. The directory holds
+secrets (`api_hash`, the session file grants full account access), so on
+POSIX it is made private to the user (mode 0700) when the credentials are
+saved:
 
 - Windows: `%APPDATA%\tg-reader\`
 - Linux: `~/.config/tg-reader/`
@@ -91,6 +95,8 @@ for AI agents.
   exits.
 - Otherwise runs the interactive login flow: phone number → confirmation code →
   2FA password (if enabled). On success the session file is created.
+- The network part runs under the same inter-process lock as the other
+  commands, so the session file is never opened by two processes at once.
 
 ### tg-reader read
 
@@ -149,8 +155,8 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
     arguments, unknown chat, not authorized — the latter with a hint to run
     `tg-reader auth`);
   - `2` — temporarily unavailable, the stderr message ends with
-    `retry after Ns`: wait and retry (another process holds the lock, or a
-    Telegram flood wait is active).
+    `retry after Ns`: wait and retry (another process holds the lock, a
+    Telegram flood wait is active, or the network is down).
 - `--help` (on both `tg-reader` and its subcommands) — a self-sufficient help
   text aimed at an AI agent: the utility's purpose, all arguments, accepted
   `CHAT_ID` formats, the JSON output schema with field descriptions, usage
@@ -199,7 +205,7 @@ the specific messages that are worth fetching.
   permanent errors (unknown chat, message not found, message has no
   downloadable media, file exceeds the size cap), `2` for "temporarily
   unavailable, retry after Ns" (lock held by another process, active flood
-  wait).
+  wait, network down).
 
 #### File naming
 
@@ -213,7 +219,8 @@ they are never used verbatim:
 - Sanitization: path separators and Windows-forbidden characters
   (`<>:"/\|?*`, control chars) are replaced, reserved device names (`CON`,
   `NUL`, ...) are prefixed, trailing dots/spaces are stripped, overly long
-  names are truncated preserving the extension.
+  names are truncated preserving the extension (the cap is counted in UTF-8
+  bytes, matching filesystem name limits).
 - The name is deterministic and an existing file is silently overwritten:
   re-running the same download is idempotent (same message — same path, same
   content), and the `<msg_id>_` prefix rules out collisions between
@@ -241,11 +248,11 @@ FLOOD_WAIT penalties is the main way accounts get escalating restrictions.
 The protection layer (`throttle.py`) is automatic and not configurable;
 policy constants live at the top of the module.
 
-- **Inter-process lock** — the whole `read` run (connect → fetch →
-  disconnect) executes under a global file lock, so only one `tg-reader`
-  process talks to Telegram at a time and the SQLite session file is never
-  opened concurrently. A second process waits up to 30 s, then fails with
-  exit code 2.
+- **Inter-process lock** — the whole networked part of a run (connect →
+  work → disconnect; all three commands, including `auth`) executes under a
+  global file lock, so only one `tg-reader` process talks to Telegram at a
+  time and the SQLite session file is never opened concurrently. A second
+  process waits up to 30 s, then fails with exit code 2.
 - **FloodWait handling** — waits up to 30 s are slept through in place
   (Telethon's `flood_sleep_threshold`). Longer waits abort the run and the
   deadline is persisted to `throttle.json`; until it expires, every run
@@ -277,8 +284,8 @@ reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
 no-media and message-not-found errors).
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) runs the suite on Ubuntu
-and Windows for every push to `main` and every pull request. Since users
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
+Ubuntu and Windows for every push to `main` and every pull request. Since users
 install straight from the git repository, the workflow also smoke-tests
 the packaged entry point (`uvx --from . tg-reader ... --help`) and the
 unauthorized exit-code contract. The real Telegram API is never touched:

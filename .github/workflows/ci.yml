@@ -19,9 +19,10 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-      - name: Run tests
+      - name: Run lint and tests
         run: |
           uv sync --locked
+          uv run ruff check
           uv run pytest
       # Users install straight from git, so the packaging and the entry
       # point are part of the contract: build and run the tool the same

@@ -26,6 +26,9 @@ MIN_INTERVAL = 2.0
 # FloodWait up to this many seconds is slept through by Telethon in-place;
 # longer waits abort the run and persist the deadline.
 FLOOD_SLEEP_THRESHOLD = 30
+# Retry hint, in seconds, reported when Telegram cannot be reached over
+# the network (a transient condition: exit code 2, not 1).
+NETWORK_RETRY_HINT = 30
 # Upper bound for --limit: keeps one run to a single GetHistory request.
 MAX_LIMIT = 100
 

@@ -53,7 +53,9 @@ async def download_to_dir(
     target = output_dir / build_filename(msg_id, info)
     part = target.with_name(target.name + ".part")
     try:
-        await client.download_media(message, file=str(part))
+        downloaded = await client.download_media(message, file=str(part))
+        if downloaded is None:
+            raise DownloadError(f"Telegram returned no file for message {msg_id}.")
         os.replace(part, target)
     finally:
         part.unlink(missing_ok=True)
@@ -89,8 +91,8 @@ async def run_download(
             cfg["api_hash"],
             flood_sleep_threshold=throttle.FLOOD_SLEEP_THRESHOLD,
         )
-        await client.connect()
         try:
+            await client.connect()
             if not await client.is_user_authorized():
                 raise NotAuthorizedError(
                     "Not authorized. Run 'tg-reader auth' first (interactive)."
@@ -102,6 +104,10 @@ async def run_download(
             throttle.record_flood_wait(error.seconds)
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
+            ) from error
+        except (ConnectionError, TimeoutError) as error:
+            raise throttle.RetryLaterError(
+                f"cannot reach Telegram ({error})", throttle.NETWORK_RETRY_HINT
             ) from error
         finally:
             await client.disconnect()

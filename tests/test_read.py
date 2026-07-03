@@ -27,6 +27,7 @@ from telethon.tl.types import (
 from tg_reader import config, throttle
 from tg_reader.read import (
     ChatNotFoundError,
+    NotAuthorizedError,
     candidate_peers,
     fetch_messages,
     message_to_dict,
@@ -264,6 +265,26 @@ async def test_run_read_flood_wait_persists_deadline(config_dir, mocker):
         (config_dir / throttle.STATE_FILENAME).read_text(encoding="utf-8")
     )
     assert state["flood_until"] > time.time()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_read_corrupt_config_asks_for_auth(config_dir, mocker):
+    (config_dir / config.CONFIG_FILENAME).write_text("{not json", encoding="utf-8")
+    client_class = mocker.patch("tg_reader.read.TelegramClient")
+
+    with pytest.raises(NotAuthorizedError):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client_class.assert_not_called()
+
+
+async def test_run_read_network_error_maps_to_retry_later(config_dir, mocker):
+    client = make_connected_client(mocker)
+    client.connect.side_effect = ConnectionError("Connection to Telegram failed")
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
     client.disconnect.assert_awaited_once()
 
 

@@ -19,7 +19,7 @@ from telethon.tl.types import (
     PhotoStrippedSize,
 )
 
-from tg_reader.media import MAX_NAME_LENGTH, build_filename, media_info
+from tg_reader.media import MAX_NAME_BYTES, build_filename, media_info
 
 
 def make_document(mime_type="application/pdf", size=1000, attributes=None):
@@ -238,4 +238,16 @@ def test_build_filename_overlong_name_truncated_keeps_extension():
 
     assert result.startswith("555_x")
     assert result.endswith(".txt")
-    assert len(result) == len("555_") + MAX_NAME_LENGTH
+    assert len(result) == len("555_") + MAX_NAME_BYTES
+
+
+def test_build_filename_overlong_name_truncated_by_utf8_bytes():
+    # 100 emoji are 100 characters but 400 UTF-8 bytes: the cap must be
+    # applied to bytes (255-byte filesystem limits) without splitting a
+    # character.
+    result = build_filename(555, info(filename="\U0001f642" * 100 + ".txt"))
+
+    name = result.removeprefix("555_")
+    assert len(name.encode("utf-8")) <= MAX_NAME_BYTES
+    assert result.endswith(".txt")
+    assert "\U0001f642" in name

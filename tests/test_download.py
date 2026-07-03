@@ -108,6 +108,16 @@ async def test_download_refuses_oversized_file(tmp_path):
     client.download_media.assert_not_called()
 
 
+async def test_download_no_file_returned_is_permanent_error(tmp_path):
+    client = make_client(make_media_message())
+    client.download_media = AsyncMock(return_value=None)
+
+    with pytest.raises(DownloadError, match="returned no file"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    assert list(tmp_path.iterdir()) == []
+
+
 async def test_download_failure_removes_part_file(tmp_path):
     client = make_client(make_media_message())
 
@@ -166,6 +176,18 @@ async def test_run_download_flood_wait_persists_deadline(config_dir, tmp_path, m
         (config_dir / throttle.STATE_FILENAME).read_text(encoding="utf-8")
     )
     assert state["flood_until"] > time.time()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_download_network_error_maps_to_retry_later(
+    config_dir, tmp_path, mocker
+):
+    client = make_connected_client(mocker, make_media_message())
+    client.connect.side_effect = ConnectionError("Connection to Telegram failed")
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)
+
     client.disconnect.assert_awaited_once()
 
 

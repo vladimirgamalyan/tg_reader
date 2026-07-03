@@ -111,8 +111,8 @@ errors and exit codes:
      interactive and must be run by a human, do not run it as an agent.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
-     Causes: another tg-reader process is running, or Telegram assigned
-     a flood wait (rate limiting).
+     Causes: another tg-reader process is running, Telegram assigned a
+     flood wait (rate limiting), or the network is down.
 
 flood protection (automatic, no configuration):
   Only one tg-reader process talks to Telegram at a time; consecutive
@@ -169,8 +169,9 @@ errors and exit codes:
      arguments.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
-     Downloads can take a while; while one is running, any other tg-reader
-     run fails fast with exit code 2.
+     Causes: another tg-reader run (downloads can take a while; any other
+     run fails fast meanwhile), a Telegram flood wait, or the network is
+     down.
 
 flood protection (automatic, no configuration):
   Same as 'read': only one tg-reader process talks to Telegram at a time,
@@ -295,10 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # On Windows, redirected stdout defaults to the legacy ANSI code page,
-    # which cannot encode arbitrary message text (emoji etc.). JSON output
-    # must always be UTF-8.
+    # On Windows, redirected stdout/stderr default to the legacy ANSI code
+    # page, which cannot encode arbitrary text (emoji, paths etc.). JSON
+    # output and error messages must always be UTF-8.
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     try:
         if args.command == "auth":
