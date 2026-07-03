@@ -11,6 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.14"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -19,26 +20,28 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
+      - name: Install Python
+        run: uv python install ${{ matrix.python }}
       - name: Run lint and tests
         run: |
-          uv sync --locked
-          uv run ruff check
-          uv run ruff format --check
-          uv run pytest
+          uv sync --locked --python ${{ matrix.python }}
+          uv run --python ${{ matrix.python }} ruff check
+          uv run --python ${{ matrix.python }} ruff format --check
+          uv run --python ${{ matrix.python }} pytest
       # Users install straight from git, so the packaging and the entry
       # point are part of the contract: build and run the tool the same
       # way 'uvx --from git+<repo-url>' would.
       - name: Smoke-test the packaged entry point
         shell: bash
         run: |
-          uvx --from . tg-reader --help
-          uvx --from . tg-reader read --help
-          uvx --from . tg-reader download --help
+          uvx --python ${{ matrix.python }} --from . tg-reader --help
+          uvx --python ${{ matrix.python }} --from . tg-reader read --help
+          uvx --python ${{ matrix.python }} --from . tg-reader download --help
       - name: Unauthorized read exits with code 1
         shell: bash
         run: |
           set +e
-          uvx --from . tg-reader read 1
+          uvx --python ${{ matrix.python }} --from . tg-reader read 1
           code=$?
           set -e
           test "$code" -eq 1

@@ -31,7 +31,7 @@ for a later version.
 
 ## Stack
 
-- Python 3.14, managed with `uv`
+- Python 3.11+, managed with `uv`
 - [Telethon](https://docs.telethon.dev/) — MTProto client
 - platformdirs — user data directory resolution
 - filelock — inter-process lock for the flood protection layer
