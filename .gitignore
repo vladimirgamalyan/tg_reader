@@ -30,6 +30,8 @@ htmlcov/
 .env
 .env.*
 !.env.example
+*.session
+*.session-journal
 
 # IDE and OS files
 .idea/
