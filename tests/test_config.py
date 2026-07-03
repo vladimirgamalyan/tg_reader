@@ -39,6 +39,30 @@ def test_load_config_missing_keys_treated_as_missing(config_dir):
     assert config.load_config() is None
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"api_id": "1", "api_hash": "hash"},
+        {"api_id": True, "api_hash": "hash"},
+        {"api_id": 0, "api_hash": "hash"},
+        {"api_id": 1, "api_hash": ""},
+        {"api_id": 1, "api_hash": "   "},
+    ],
+)
+def test_load_config_invalid_values_treated_as_missing(config_dir, data):
+    (config_dir / config.CONFIG_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+
+    assert config.load_config() is None
+
+
+def test_load_config_strips_api_hash(config_dir):
+    (config_dir / config.CONFIG_FILENAME).write_text(
+        json.dumps({"api_id": 1, "api_hash": " hash "}), encoding="utf-8"
+    )
+
+    assert config.load_config() == {"api_id": 1, "api_hash": "hash"}
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions only")
 def test_save_config_makes_directory_private(config_dir):
     config.save_config(1, "hash")

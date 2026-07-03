@@ -47,9 +47,15 @@ def load_config() -> dict | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError, json.JSONDecodeError:
         return None
-    if not isinstance(data, dict) or "api_id" not in data or "api_hash" not in data:
+    if not isinstance(data, dict):
         return None
-    return data
+    api_id = data.get("api_id")
+    api_hash = data.get("api_hash")
+    if not isinstance(api_id, int) or isinstance(api_id, bool) or api_id <= 0:
+        return None
+    if not isinstance(api_hash, str) or not api_hash.strip():
+        return None
+    return {"api_id": api_id, "api_hash": api_hash.strip()}
 
 
 def save_config(api_id: int, api_hash: str) -> None:

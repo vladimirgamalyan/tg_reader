@@ -27,6 +27,34 @@ def test_download_requires_output():
     assert excinfo.value.code == 1
 
 
+def test_read_rejects_zero_chat_id():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["read", "0"])
+
+    assert excinfo.value.code == 1
+
+
+def test_read_rejects_non_positive_offset_id():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["read", "-100123", "--offset-id", "0"])
+
+    assert excinfo.value.code == 1
+
+
+def test_download_rejects_zero_chat_id():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["download", "0", "555", "--output", "out"])
+
+    assert excinfo.value.code == 1
+
+
+def test_download_rejects_non_positive_msg_id():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["download", "-100123", "0", "--output", "out"])
+
+    assert excinfo.value.code == 1
+
+
 def test_download_rejects_non_positive_max_size():
     with pytest.raises(SystemExit) as excinfo:
         cli.build_parser().parse_args(

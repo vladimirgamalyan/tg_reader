@@ -60,7 +60,7 @@ READ_DESCRIPTION = """\
 Fetch recent messages from one chat and print them as a JSON array to stdout,
 newest message first.
 
-CHAT_ID is a numeric chat/channel/user ID. Accepted forms:
+CHAT_ID is a non-zero numeric chat/channel/user ID. Accepted forms:
   -100<id>   Bot-API-style marked ID of a channel or supergroup
   -<id>      Bot-API-style marked ID of a small group chat
   <id>       raw positive MTProto ID (user, channel or small group chat)
@@ -139,9 +139,9 @@ messages (type, size) and pick the message IDs worth fetching, then run this
 command once per message. The message is re-fetched at download time, so it
 does not matter how old the 'read' output is.
 
-CHAT_ID is a numeric chat/channel/user ID, same accepted forms as in
-'tg-reader read' (see its --help). MSG_ID is the 'id' field from the 'read'
-output; the message must actually carry media ('media' is not null).
+CHAT_ID is a non-zero numeric chat/channel/user ID, same accepted forms as in
+'tg-reader read' (see its --help). MSG_ID is the positive 'id' field from
+the 'read' output; the message must actually carry media ('media' is not null).
 
 The file is saved into --output DIR (created if missing) under the name
 '<MSG_ID>_<original filename>', sanitized; media without a name (photos,
@@ -200,18 +200,36 @@ class Parser(argparse.ArgumentParser):
         self.exit(1, f"error: {message}\n")
 
 
+def _parse_int(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer") from None
+
+
+def chat_id_type(value: str) -> int:
+    chat_id = _parse_int(value)
+    if chat_id == 0:
+        raise argparse.ArgumentTypeError("must be a non-zero integer")
+    return chat_id
+
+
+def positive_int_type(value: str) -> int:
+    number = _parse_int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
 def limit_type(value: str) -> int:
-    limit = int(value)
+    limit = _parse_int(value)
     if not 1 <= limit <= MAX_LIMIT:
         raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_LIMIT}")
     return limit
 
 
 def max_size_type(value: str) -> int:
-    size = int(value)
-    if size < 1:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return size
+    return positive_int_type(value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,8 +263,8 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser.add_argument(
         "chat_id",
         metavar="CHAT_ID",
-        type=int,
-        help="numeric chat/channel/user ID (see accepted forms above)",
+        type=chat_id_type,
+        help="non-zero numeric chat/channel/user ID (see accepted forms above)",
     )
     read_parser.add_argument(
         "--limit",
@@ -258,9 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser.add_argument(
         "--offset-id",
         metavar="MSG_ID",
-        type=int,
+        type=positive_int_type,
         default=0,
-        help="fetch only messages older than this message ID (default: newest)",
+        help="fetch only messages older than this positive message ID (default: newest)",
     )
 
     download_parser = subparsers.add_parser(
@@ -273,14 +291,14 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument(
         "chat_id",
         metavar="CHAT_ID",
-        type=int,
-        help="numeric chat/channel/user ID, same forms as in 'read'",
+        type=chat_id_type,
+        help="non-zero numeric chat/channel/user ID, same forms as in 'read'",
     )
     download_parser.add_argument(
         "msg_id",
         metavar="MSG_ID",
-        type=int,
-        help="message ID (the 'id' field of the 'read' output)",
+        type=positive_int_type,
+        help="positive message ID (the 'id' field of the 'read' output)",
     )
     download_parser.add_argument(
         "--output",

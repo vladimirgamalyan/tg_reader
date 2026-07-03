@@ -110,7 +110,7 @@ for AI agents.
 tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
 ```
 
-- `CHAT_ID` — numeric chat/channel/user ID. Both raw MTProto IDs and
+- `CHAT_ID` — non-zero numeric chat/channel/user ID. Both raw MTProto IDs and
   Bot-API-style `-100...` IDs are accepted.
 - `--limit N` — number of messages to fetch, 1..100 (default: 20). The cap
   keeps one run to a single GetHistory API request.
@@ -187,9 +187,9 @@ Downloads the media attachment of a single message. The intended flow for an
 agent: run `read`, inspect the `media` metadata (type, size), then download
 the specific messages that are worth fetching.
 
-- `CHAT_ID` — same formats as `read`. `MSG_ID` — message ID from the `read`
-  output. One message per run; to fetch an album, run `download` once per
-  album message (see `grouped_id` above).
+- `CHAT_ID` — same formats as `read`. `MSG_ID` — positive message ID from the
+  `read` output. One message per run; to fetch an album, run `download` once
+  per album message (see `grouped_id` above).
 - `--output DIR` — required destination directory; created if missing.
 - `--max-size MB` — refuse to download files larger than this (default:
   100). Protects an agent from accidentally pulling a multi-GB video; the
