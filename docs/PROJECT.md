@@ -330,5 +330,6 @@ src/tg_reader/
     errors.py     # PermanentError: base class for exit-code-1 failures
     config.py     # user directory, config.json load/save
 docs/PROJECT.md   # this file
+adr/              # architecture decision records
 tests/
 ```
