@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -92,9 +92,9 @@ def test_download_error_exits_1(mocker, capsys):
 
 
 def test_keyboard_interrupt_exits_130(mocker, capsys):
-    # run_read is replaced with a plain mock so that no coroutine is
+    # run_read is replaced with a non-async mock so that no coroutine is
     # created (the patched asyncio.run would never await it).
-    mocker.patch("tg_reader.cli.run_read")
+    mocker.patch("tg_reader.cli.run_read", new=MagicMock())
     mocker.patch("tg_reader.cli.asyncio.run", side_effect=KeyboardInterrupt)
 
     exit_code = cli.main(["read", "-100123"])
