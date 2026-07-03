@@ -1,5 +1,7 @@
 # tg-reader
 
+[![CI](https://github.com/vladimirgamalyan/tg_reader/actions/workflows/ci.yml/badge.svg)](https://github.com/vladimirgamalyan/tg_reader/actions/workflows/ci.yml)
+
 A small CLI utility for reading messages from your own Telegram account
 (MTProto via Telethon). Designed to be used by AI agents.
 
