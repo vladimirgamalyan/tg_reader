@@ -41,6 +41,24 @@ def test_read_rejects_non_positive_offset_id():
     assert excinfo.value.code == 1
 
 
+def test_read_uses_cache_by_default(mocker, capsys):
+    run_read = mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 0
+    run_read.assert_awaited_once_with(-100123, 20, 0, use_cache=True)
+
+
+def test_read_no_cache_flag_forces_network(mocker, capsys):
+    run_read = mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+
+    exit_code = cli.main(["read", "-100123", "--no-cache"])
+
+    assert exit_code == 0
+    run_read.assert_awaited_once_with(-100123, 20, 0, use_cache=False)
+
+
 def test_download_rejects_zero_chat_id():
     with pytest.raises(SystemExit) as excinfo:
         cli.build_parser().parse_args(["download", "0", "555", "--output", "out"])

@@ -3,7 +3,7 @@
 from telethon import TelegramClient, utils
 from telethon.tl.types import PeerChannel, PeerChat, PeerUser
 
-from . import media
+from . import cache, media
 from .errors import PermanentError
 from .session import telegram_session
 
@@ -80,16 +80,39 @@ def message_to_dict(message) -> dict:
     }
 
 
+def cache_chat_id_candidates(chat_id: int) -> list[int]:
+    """Marked chat IDs a user-supplied ID may refer to, for cache lookup."""
+    return [utils.get_peer_id(peer) for peer in candidate_peers(chat_id)]
+
+
 async def fetch_messages(
     client: TelegramClient, chat_id: int, limit: int, offset_id: int
-) -> list[dict]:
-    """Fetch recent messages from a chat, newest first, as plain dicts."""
+) -> tuple[int, list[dict]]:
+    """Fetch recent messages from a chat, newest first, as plain dicts.
+
+    Returns the resolved marked chat ID (the cache key) and the messages.
+    """
     entity = await resolve_chat(client, chat_id)
     messages = await client.get_messages(entity, limit=limit, offset_id=offset_id)
-    return [message_to_dict(message) for message in messages]
+    return utils.get_peer_id(entity), [message_to_dict(m) for m in messages]
 
 
-async def run_read(chat_id: int, limit: int, offset_id: int) -> list[dict]:
-    """Entry point for the 'read' command: one fetch inside a Telegram session."""
+async def run_read(
+    chat_id: int, limit: int, offset_id: int, use_cache: bool = True
+) -> list[dict]:
+    """Entry point for the 'read' command.
+
+    A paginated request whose window is fully covered by the local cache is
+    served without touching Telegram (no lock, no pacing, no session). Every
+    network fetch refreshes the cache, --no-cache runs included.
+    """
+    if use_cache:
+        cached = cache.lookup(cache_chat_id_candidates(chat_id), limit, offset_id)
+        if cached is not None:
+            return cached
     async with telegram_session() as client:
-        return await fetch_messages(client, chat_id, limit, offset_id)
+        marked_chat_id, messages = await fetch_messages(
+            client, chat_id, limit, offset_id
+        )
+    cache.store(marked_chat_id, messages, limit, offset_id)
+    return messages

@@ -24,6 +24,7 @@ from telethon.sessions import MemorySession
 from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
+    InputPeerChannel,
     MessageMediaDocument,
     PeerChannel,
     PeerChat,
@@ -31,7 +32,7 @@ from telethon.tl.types import (
     User,
 )
 
-from tg_reader import config, throttle
+from tg_reader import cache, config, throttle
 from tg_reader.read import (
     ChatNotFoundError,
     candidate_peers,
@@ -240,13 +241,17 @@ def test_message_to_dict_reply():
 
 async def test_fetch_messages_returns_dicts_newest_first():
     client = AsyncMock()
-    client.session.get_input_entity = MagicMock(return_value="input-entity")
+    entity = InputPeerChannel(1234567890, access_hash=0)
+    client.session.get_input_entity = MagicMock(return_value=entity)
     client.get_messages.return_value = [make_message(id=2), make_message(id=1)]
 
-    result = await fetch_messages(client, -1001234567890, limit=2, offset_id=0)
+    marked_chat_id, result = await fetch_messages(
+        client, -1001234567890, limit=2, offset_id=0
+    )
 
+    assert marked_chat_id == -1001234567890
     assert [message["id"] for message in result] == [2, 1]
-    client.get_messages.assert_awaited_once_with("input-entity", limit=2, offset_id=0)
+    client.get_messages.assert_awaited_once_with(entity, limit=2, offset_id=0)
 
 
 # --- run_read: flood protection wiring ---
@@ -264,7 +269,11 @@ def config_dir(tmp_path, monkeypatch):
 def make_connected_client(mocker):
     """Patch TelegramClient in the session module and return the client mock."""
     client = AsyncMock()
-    client.session.get_input_entity = MagicMock(return_value="input-entity")
+    # A real input entity: run_read derives the cache key from it via
+    # utils.get_peer_id, which rejects plain mocks.
+    client.session.get_input_entity = MagicMock(
+        return_value=InputPeerChannel(1234567890, access_hash=0)
+    )
     client.is_user_authorized.return_value = True
     mocker.patch("tg_reader.session.TelegramClient", return_value=client)
     return client
@@ -375,3 +384,61 @@ async def test_run_read_refuses_while_flood_wait_active(config_dir, mocker):
         await run_read(-1001234567890, limit=1, offset_id=0)
 
     client_class.assert_not_called()
+
+
+# --- run_read: local cache wiring ---
+
+
+async def test_run_read_serves_covered_range_from_cache(config_dir, mocker):
+    cache.store(
+        -1001234567890, [message_to_dict(make_message(id=5))], limit=1, offset_id=6
+    )
+    client_class = mocker.patch("tg_reader.session.TelegramClient")
+
+    result = await run_read(-1001234567890, limit=1, offset_id=6)
+
+    assert [message["id"] for message in result] == [5]
+    client_class.assert_not_called()
+
+
+async def test_run_read_newest_request_always_fetches(config_dir, mocker):
+    cache.store(
+        -1001234567890, [message_to_dict(make_message(id=5))], limit=1, offset_id=6
+    )
+    client = make_connected_client(mocker)
+    client.get_messages.return_value = [make_message(id=7)]
+
+    result = await run_read(-1001234567890, limit=1, offset_id=0)
+
+    assert [message["id"] for message in result] == [7]
+    client.get_messages.assert_awaited_once()
+
+
+async def test_run_read_network_fetch_populates_cache(config_dir, mocker):
+    client = make_connected_client(mocker)
+    client.get_messages.return_value = [make_message(id=5)]
+
+    first = await run_read(-1001234567890, limit=1, offset_id=6)
+    second = await run_read(-1001234567890, limit=1, offset_id=6)
+
+    assert second == first
+    client.get_messages.assert_awaited_once()  # the second run hit the cache
+
+
+async def test_run_read_no_cache_fetches_and_refreshes(config_dir, mocker):
+    cache.store(
+        -1001234567890,
+        [message_to_dict(make_message(id=5, message="old text"))],
+        limit=1,
+        offset_id=6,
+    )
+    client = make_connected_client(mocker)
+    client.get_messages.return_value = [make_message(id=5, message="edited text")]
+
+    result = await run_read(-1001234567890, limit=1, offset_id=6, use_cache=False)
+
+    assert result[0]["text"] == "edited text"
+    client.get_messages.assert_awaited_once()
+    # The forced fetch refreshed the cached copy.
+    cached = cache.lookup([-1001234567890], 1, 6)
+    assert cached[0]["text"] == "edited text"

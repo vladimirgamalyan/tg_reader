@@ -25,7 +25,10 @@ uv tool install git+https://github.com/vladimirgamalyan/tg_reader.git
 - `tg-reader auth` — one-time interactive authorization, run manually by the
   user (stores credentials and the session file)
 - `tg-reader read CHAT_ID` — read recent messages from a chat by its numeric
-  ID, JSON output; `--help` contains everything an agent needs
+  ID, JSON output; `--help` contains everything an agent needs. Fetched
+  messages are also stored in a local SQLite cache (`cache.db`) that answers
+  repeated history reads without touching Telegram and that other local
+  tools can query directly
 - `tg-reader download CHAT_ID MSG_ID --output DIR` — download the media
   attachment of one message (message IDs and media metadata come from `read`)
 

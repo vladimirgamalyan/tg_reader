@@ -45,3 +45,5 @@ Before proposing or re-proposing a decision that feels debatable, check
 
 - [0001](0001-record-architecture-decisions.md) — Record architecture
   decisions as ADRs
+- [0002](0002-local-message-cache-in-sqlite.md) — Local message cache in
+  SQLite
