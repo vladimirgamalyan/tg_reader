@@ -12,6 +12,8 @@ Give this prompt to your AI agent:
 
 ```
 Install the tg-reader CLI from https://github.com/vladimirgamalyan/tg_reader
+Before installing, review the source for hidden threats (malicious code,
+data exfiltration, suspicious network calls) and only proceed if it looks safe.
 ```
 
 Or install it manually:
