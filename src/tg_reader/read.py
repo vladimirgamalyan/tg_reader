@@ -68,16 +68,28 @@ async def resolve_chat(client: TelegramClient, chat_id: int):
 
 def message_to_dict(message) -> dict:
     """Convert a Telethon message into the JSON output format."""
+    reply_to = getattr(message, "reply_to", None)
     return {
         "id": message.id,
         "date": message.date.isoformat() if message.date else None,
         "sender_id": message.sender_id,
         "sender_name": utils.get_display_name(message.sender) or None,
         "text": message.message or None,
+        "topic_id": _topic_id(reply_to),
         "reply_to_msg_id": message.reply_to_msg_id,
+        "is_service": getattr(message, "action", None) is not None,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
     }
+
+
+def _topic_id(reply_to) -> int | None:
+    """Return the forum topic root message ID for a reply header, if known."""
+    if reply_to is None or not getattr(reply_to, "forum_topic", False):
+        return None
+    return getattr(reply_to, "reply_to_top_id", None) or getattr(
+        reply_to, "reply_to_msg_id", None
+    )
 
 
 def cache_chat_id_candidates(chat_id: int) -> list[int]:

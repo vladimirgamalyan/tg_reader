@@ -137,7 +137,9 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
     "sender_id": 111222333,
     "sender_name": "John Doe",
     "text": "message text or media caption; null if none",
+    "topic_id": 777,
     "reply_to_msg_id": 12340,
+    "is_service": false,
     "grouped_id": 13579246812345678,
     "media": {
       "type": "document",
@@ -148,8 +150,16 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
   }
   ```
 
+- `topic_id` — root message ID of the forum topic that contains the message;
+  `null` when the message is outside forum topics or Telegram did not expose
+  topic metadata. This is not the same as `reply_to_msg_id`: a message can
+  reply to another message inside a topic while `topic_id` still points to the
+  topic root.
 - `reply_to_msg_id` — ID of the message this one replies to; `null` when the
   message is not a reply.
+- `is_service` — `true` for Telegram service/action messages (joins, pins,
+  title changes, topic events), `false` for regular messages including
+  media-only messages.
 - `grouped_id` — shared album ID. An album (several photos/files sent
   together) is several separate messages, each with its own `id` and its own
   `media`; the caption is carried by only one of them. Clients render such
@@ -295,15 +305,18 @@ Serving rules:
   another program) never fails the run: lookups fall back to the network and
   a warning is printed to stderr. A `cache.db` with an unknown schema
   version is left untouched — other applications may rely on its contents.
+  Known older tg-reader schemas may be migrated in place when the change is
+  compatible with preserving existing cached rows.
 
-Schema (`PRAGMA user_version = 1`):
+Schema (`PRAGMA user_version = 2`):
 
 - `messages` — one row per message, primary key `(chat_id, id)`. Columns
   `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `sender_id`,
-  `sender_name`, `text`, `reply_to_msg_id`, `grouped_id` carry the same
-  values as the `read` JSON output; `media` is the `media` object serialized
-  as JSON (NULL when the message has none); `fetched_at` is the ISO 8601 UTC
-  time the row was written. A re-fetched message replaces its stored row.
+  `sender_name`, `text`, `topic_id`, `reply_to_msg_id`, `is_service`,
+  `grouped_id` carry the same values as the `read` JSON output; `media` is
+  the `media` object serialized as JSON (NULL when the message has none);
+  `fetched_at` is the ISO 8601 UTC time the row was written. A re-fetched
+  message replaces its stored row.
 - `coverage` — per-chat inclusive `[min_id, max_id]` ranges within which the
   cache holds every message that existed server-side at fetch time
   (GetHistory returns consecutive messages, so one response proves a whole

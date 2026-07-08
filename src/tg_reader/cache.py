@@ -29,7 +29,7 @@ CACHE_FILENAME = "cache.db"
 # Bumped when the on-disk schema changes. A database with a different
 # version is left untouched (other applications may still rely on it) and
 # the cache is skipped for the run.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # Time to wait for a concurrent writer (another tg-reader run or an
 # external application) before treating the database as unavailable.
 BUSY_TIMEOUT = 5.0
@@ -42,7 +42,9 @@ CREATE TABLE messages (
     sender_id       INTEGER,
     sender_name     TEXT,
     text            TEXT,
+    topic_id        INTEGER,           -- forum topic root message ID
     reply_to_msg_id INTEGER,
+    is_service      INTEGER NOT NULL,  -- 0/1 boolean service-message marker
     grouped_id      INTEGER,
     media           TEXT,              -- 'media' object of the 'read' output as JSON
     fetched_at      TEXT NOT NULL,     -- ISO 8601 UTC time the row was written
@@ -80,6 +82,9 @@ def _connect(create: bool) -> sqlite3.Connection | None:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
             return conn
+        if version == 1:
+            _migrate_v1_to_v2(conn)
+            return conn
         tables = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version != 0 or tables != 0:
             raise _UnusableCacheError(
@@ -92,6 +97,16 @@ def _connect(create: bool) -> sqlite3.Connection | None:
     except (sqlite3.Error, _UnusableCacheError):
         conn.close()
         raise
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add read output columns introduced in schema v2."""
+    with conn:
+        conn.execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER")
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def _warn(error: Exception) -> None:
@@ -120,14 +135,27 @@ def _cached_chat_id(conn: sqlite3.Connection, candidates: list[int]) -> int | No
 
 def _row_to_dict(row: tuple) -> dict:
     """Rebuild the 'read' output dict from a messages table row."""
-    (msg_id, date, sender_id, sender_name, text, reply_to, grouped_id, media) = row
+    (
+        msg_id,
+        date,
+        sender_id,
+        sender_name,
+        text,
+        topic_id,
+        reply_to,
+        is_service,
+        grouped_id,
+        media,
+    ) = row
     return {
         "id": msg_id,
         "date": date,
         "sender_id": sender_id,
         "sender_name": sender_name,
         "text": text,
+        "topic_id": topic_id,
         "reply_to_msg_id": reply_to,
+        "is_service": bool(is_service),
         "grouped_id": grouped_id,
         "media": json.loads(media) if media is not None else None,
     }
@@ -164,7 +192,7 @@ def lookup(
         (min_id,) = row
         rows = conn.execute(
             "SELECT id, date, sender_id, sender_name, text,"
-            " reply_to_msg_id, grouped_id, media FROM messages"
+            " topic_id, reply_to_msg_id, is_service, grouped_id, media FROM messages"
             " WHERE chat_id = ? AND id >= ? AND id < ?"
             " ORDER BY id DESC LIMIT ?",
             (chat_id, min_id, offset_id, limit),
@@ -244,8 +272,9 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
             conn.executemany(
                 "INSERT OR REPLACE INTO messages"
                 " (chat_id, id, date, sender_id, sender_name, text,"
-                "  reply_to_msg_id, grouped_id, media, fetched_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  topic_id, reply_to_msg_id, is_service, grouped_id, media,"
+                "  fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         chat_id,
@@ -254,7 +283,9 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
                         message["sender_id"],
                         message["sender_name"],
                         message["text"],
+                        message["topic_id"],
                         message["reply_to_msg_id"],
+                        int(message["is_service"]),
                         message["grouped_id"],
                         json.dumps(message["media"], ensure_ascii=False)
                         if message["media"] is not None

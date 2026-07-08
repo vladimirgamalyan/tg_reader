@@ -81,8 +81,12 @@ output schema (JSON array on stdout, newest message first), each element:
   sender_name      str|null  display name of the sender
   text             str|null  message text or media caption; null if none
                              (service messages, media without caption)
+  topic_id         int|null  forum topic root message ID; null outside
+                             forum topics or when Telegram does not expose it
   reply_to_msg_id  int|null  ID of the message this one replies to; null
                              when the message is not a reply
+  is_service       bool      true for Telegram service/action messages
+                             (joins, pins, title changes, topic events)
   grouped_id       int|null  album ID, see 'albums' below; null for
                              standalone messages
   media            obj|null  downloadable attachment metadata; null when

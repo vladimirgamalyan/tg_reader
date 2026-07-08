@@ -26,6 +26,7 @@ from telethon.tl.types import (
     DocumentAttributeFilename,
     InputPeerChannel,
     MessageMediaDocument,
+    MessageReplyHeader,
     PeerChannel,
     PeerChat,
     PeerUser,
@@ -62,7 +63,9 @@ def make_message(**overrides):
         "sender_id": 111222333,
         "sender": User(id=111222333, first_name="John", last_name="Doe"),
         "message": "message text",
+        "reply_to": None,
         "reply_to_msg_id": None,
+        "action": None,
         "grouped_id": None,
         "media": None,
     }
@@ -178,7 +181,9 @@ def test_message_to_dict_all_fields():
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": "message text",
+        "topic_id": None,
         "reply_to_msg_id": None,
+        "is_service": False,
         "grouped_id": None,
         "media": None,
     }
@@ -194,7 +199,9 @@ def test_message_to_dict_nulls():
         "sender_id": None,
         "sender_name": None,
         "text": None,
+        "topic_id": None,
         "reply_to_msg_id": None,
+        "is_service": False,
         "grouped_id": None,
         "media": None,
     }
@@ -234,6 +241,38 @@ def test_message_to_dict_reply():
     message = make_message(reply_to_msg_id=67890)
 
     assert message_to_dict(message)["reply_to_msg_id"] == 67890
+
+
+def test_message_to_dict_forum_topic_id():
+    reply_to = MessageReplyHeader(
+        forum_topic=True, reply_to_msg_id=101, reply_to_top_id=100
+    )
+    message = make_message(reply_to=reply_to, reply_to_msg_id=101)
+
+    assert message_to_dict(message)["topic_id"] == 100
+
+
+def test_message_to_dict_forum_topic_id_falls_back_to_reply_id():
+    reply_to = MessageReplyHeader(forum_topic=True, reply_to_msg_id=100)
+    message = make_message(reply_to=reply_to, reply_to_msg_id=100)
+
+    assert message_to_dict(message)["topic_id"] == 100
+
+
+def test_message_to_dict_non_forum_reply_has_no_topic_id():
+    reply_to = MessageReplyHeader(reply_to_msg_id=100)
+    message = make_message(reply_to=reply_to, reply_to_msg_id=100)
+
+    assert message_to_dict(message)["topic_id"] is None
+
+
+def test_message_to_dict_service_marker():
+    message = make_message(action=object(), message=None)
+
+    result = message_to_dict(message)
+
+    assert result["is_service"] is True
+    assert result["text"] is None
 
 
 # --- fetching ---
