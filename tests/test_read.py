@@ -25,6 +25,9 @@ from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
     InputPeerChannel,
+    MessageEntityBold,
+    MessageEntityTextUrl,
+    MessageEntityUrl,
     MessageMediaDocument,
     MessageReplyHeader,
     PeerChannel,
@@ -63,6 +66,7 @@ def make_message(**overrides):
         "sender_id": 111222333,
         "sender": User(id=111222333, first_name="John", last_name="Doe"),
         "message": "message text",
+        "entities": None,
         "reply_to": None,
         "reply_to_msg_id": None,
         "action": None,
@@ -181,6 +185,7 @@ def test_message_to_dict_all_fields():
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": "message text",
+        "entities": None,
         "topic_id": None,
         "reply_to_msg_id": None,
         "is_service": False,
@@ -199,6 +204,7 @@ def test_message_to_dict_nulls():
         "sender_id": None,
         "sender_name": None,
         "text": None,
+        "entities": None,
         "topic_id": None,
         "reply_to_msg_id": None,
         "is_service": False,
@@ -273,6 +279,59 @@ def test_message_to_dict_service_marker():
 
     assert result["is_service"] is True
     assert result["text"] is None
+
+
+def test_message_to_dict_text_url_entity_exposes_hidden_target():
+    # "Original" (offset 0, length 8) hides a URL the display text never shows.
+    message = make_message(
+        message="Original here",
+        entities=[MessageEntityTextUrl(offset=0, length=8, url="https://site/post")],
+    )
+
+    assert message_to_dict(message)["entities"] == [
+        {"type": "text_url", "text": "Original", "url": "https://site/post"}
+    ]
+
+
+def test_message_to_dict_plain_url_entity_url_equals_text():
+    message = make_message(
+        message="see https://t.me/x now",
+        entities=[MessageEntityUrl(offset=4, length=14)],
+    )
+
+    assert message_to_dict(message)["entities"] == [
+        {"type": "url", "text": "https://t.me/x", "url": "https://t.me/x"}
+    ]
+
+
+def test_message_to_dict_entity_offsets_are_utf16():
+    # The leading emoji is a UTF-16 surrogate pair (2 code units): a naive
+    # Python-character slice would cut the display text in the wrong place.
+    message = make_message(
+        message="🔗 Оригинал | 🗺 Карта",
+        entities=[
+            MessageEntityTextUrl(offset=0, length=11, url="https://site/post"),
+            MessageEntityTextUrl(offset=14, length=8, url="https://maps/x"),
+        ],
+    )
+
+    assert message_to_dict(message)["entities"] == [
+        {"type": "text_url", "text": "🔗 Оригинал", "url": "https://site/post"},
+        {"type": "text_url", "text": "🗺 Карта", "url": "https://maps/x"},
+    ]
+
+
+def test_message_to_dict_non_url_entities_are_skipped():
+    message = make_message(
+        message="bold text",
+        entities=[MessageEntityBold(offset=0, length=4)],
+    )
+
+    assert message_to_dict(message)["entities"] is None
+
+
+def test_message_to_dict_no_entities_is_null():
+    assert message_to_dict(make_message())["entities"] is None
 
 
 # --- fetching ---

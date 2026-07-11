@@ -137,6 +137,9 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
     "sender_id": 111222333,
     "sender_name": "John Doe",
     "text": "message text or media caption; null if none",
+    "entities": [
+      { "type": "text_url", "text": "🔗 Original", "url": "https://example/post" }
+    ],
     "topic_id": 777,
     "reply_to_msg_id": 12340,
     "is_service": false,
@@ -150,6 +153,16 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
   }
   ```
 
+- `entities` — hyperlinks found in `text`, in document order; `null` when the
+  message has none. Telegram delivers links as message entities, and `text`
+  keeps only their displayed text, so a link hidden behind a caption (e.g. the
+  word "Original") would otherwise lose its target. Each element has `type`
+  (`text_url` for a URL hidden behind display text, `url` for a plain URL that
+  is its own text), `text` (the displayed link text), and `url` (the target;
+  for `url` entities equal to `text`). Only URL entities are emitted for now;
+  the field is an extensible container — other entity types (bold, mentions,
+  code, ...) may add new `type` values later, so consumers must ignore
+  `type` values they do not recognize.
 - `topic_id` — root message ID of the forum topic that contains the message;
   `null` when the message is outside forum topics or Telegram did not expose
   topic metadata. This is not the same as `reply_to_msg_id`: a message can
@@ -308,15 +321,15 @@ Serving rules:
   Known older tg-reader schemas may be migrated in place when the change is
   compatible with preserving existing cached rows.
 
-Schema (`PRAGMA user_version = 2`):
+Schema (`PRAGMA user_version = 3`):
 
 - `messages` — one row per message, primary key `(chat_id, id)`. Columns
   `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `sender_id`,
   `sender_name`, `text`, `topic_id`, `reply_to_msg_id`, `is_service`,
-  `grouped_id` carry the same values as the `read` JSON output; `media` is
-  the `media` object serialized as JSON (NULL when the message has none);
-  `fetched_at` is the ISO 8601 UTC time the row was written. A re-fetched
-  message replaces its stored row.
+  `grouped_id` carry the same values as the `read` JSON output; `media` and
+  `entities` are the respective `read` output values serialized as JSON (NULL
+  when the message has none); `fetched_at` is the ISO 8601 UTC time the row
+  was written. A re-fetched message replaces its stored row.
 - `coverage` — per-chat inclusive `[min_id, max_id]` ranges within which the
   cache holds every message that existed server-side at fetch time
   (GetHistory returns consecutive messages, so one response proves a whole

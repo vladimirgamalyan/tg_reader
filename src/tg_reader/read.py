@@ -1,7 +1,13 @@
 """Message reading logic: chat ID resolution and message formatting."""
 
 from telethon import TelegramClient, utils
-from telethon.tl.types import PeerChannel, PeerChat, PeerUser
+from telethon.tl.types import (
+    MessageEntityTextUrl,
+    MessageEntityUrl,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+)
 
 from . import cache, media
 from .errors import PermanentError
@@ -75,12 +81,49 @@ def message_to_dict(message) -> dict:
         "sender_id": message.sender_id,
         "sender_name": utils.get_display_name(message.sender) or None,
         "text": message.message or None,
+        "entities": _entities(message),
         "topic_id": _topic_id(reply_to),
         "reply_to_msg_id": message.reply_to_msg_id,
         "is_service": getattr(message, "action", None) is not None,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
     }
+
+
+def _entities(message) -> list[dict] | None:
+    """Extract URL-bearing message entities as {type, text, url} objects.
+
+    Telegram carries hyperlinks as message entities: a MessageEntityTextUrl
+    hides a target URL (its .url attribute) behind arbitrary display text,
+    while a MessageEntityUrl marks a plain URL that is its own text. The
+    visible message text keeps only the display text, so the hidden targets
+    of text_url entities would be lost without this.
+
+    Entity offsets and lengths are counted in UTF-16 code units, not Python
+    characters, so the display text is sliced out through a UTF-16 encoding
+    (an emoji such as the leading link glyph is one such multi-unit case).
+
+    Only URL entities are emitted for now; other formatting entities (bold,
+    mentions, code, ...) are skipped. The field is an extensible container:
+    new 'type' values can be added later without a new output field.
+    """
+    text = message.message
+    entities = getattr(message, "entities", None)
+    if not text or not entities:
+        return None
+    utf16 = text.encode("utf-16-le")
+    result = []
+    for entity in entities:
+        if isinstance(entity, MessageEntityTextUrl):
+            entity_type, url = "text_url", entity.url
+        elif isinstance(entity, MessageEntityUrl):
+            entity_type, url = "url", None
+        else:
+            continue
+        start = entity.offset * 2
+        display = utf16[start : start + entity.length * 2].decode("utf-16-le")
+        result.append({"type": entity_type, "text": display, "url": url or display})
+    return result or None
 
 
 def _topic_id(reply_to) -> int | None:

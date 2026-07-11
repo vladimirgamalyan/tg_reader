@@ -47,3 +47,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   decisions as ADRs
 - [0002](0002-local-message-cache-in-sqlite.md) — Local message cache in
   SQLite
+- [0003](0003-message-entities-field.md) — Expose message formatting through a
+  single extensible `entities` field

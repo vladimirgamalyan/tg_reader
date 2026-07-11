@@ -81,6 +81,16 @@ output schema (JSON array on stdout, newest message first), each element:
   sender_name      str|null  display name of the sender
   text             str|null  message text or media caption; null if none
                              (service messages, media without caption)
+  entities         arr|null  hyperlinks found in 'text', in document order;
+                             null when the message has none. Only URL entities
+                             are emitted for now; treat unknown 'type' values
+                             as ignorable. Each element:
+    type         str       'text_url' (a URL hidden behind display text) or
+                           'url' (a plain URL that is its own text)
+    text         str       the displayed text of the link (e.g. "Original")
+    url          str       the target URL; for 'text_url' the hidden href
+                           behind 'text', for 'url' equal to 'text'. Use this
+                           to recover link targets that 'text' alone drops
   topic_id         int|null  forum topic root message ID; null outside
                              forum topics or when Telegram does not expose it
   reply_to_msg_id  int|null  ID of the message this one replies to; null

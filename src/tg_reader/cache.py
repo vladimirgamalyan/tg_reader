@@ -29,7 +29,7 @@ CACHE_FILENAME = "cache.db"
 # Bumped when the on-disk schema changes. A database with a different
 # version is left untouched (other applications may still rely on it) and
 # the cache is skipped for the run.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # Time to wait for a concurrent writer (another tg-reader run or an
 # external application) before treating the database as unavailable.
 BUSY_TIMEOUT = 5.0
@@ -47,6 +47,7 @@ CREATE TABLE messages (
     is_service      INTEGER NOT NULL,  -- 0/1 boolean service-message marker
     grouped_id      INTEGER,
     media           TEXT,              -- 'media' object of the 'read' output as JSON
+    entities        TEXT,              -- 'entities' array of the 'read' output as JSON
     fetched_at      TEXT NOT NULL,     -- ISO 8601 UTC time the row was written
     PRIMARY KEY (chat_id, id)
 );
@@ -84,6 +85,10 @@ def _connect(create: bool) -> sqlite3.Connection | None:
             return conn
         if version == 1:
             _migrate_v1_to_v2(conn)
+            _migrate_v2_to_v3(conn)
+            return conn
+        if version == 2:
+            _migrate_v2_to_v3(conn)
             return conn
         tables = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version != 0 or tables != 0:
@@ -106,7 +111,14 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE messages ADD COLUMN is_service INTEGER NOT NULL DEFAULT 0"
         )
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.execute("PRAGMA user_version = 2")
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add the message entities column introduced in schema v3."""
+    with conn:
+        conn.execute("ALTER TABLE messages ADD COLUMN entities TEXT")
+        conn.execute("PRAGMA user_version = 3")
 
 
 def _warn(error: Exception) -> None:
@@ -141,6 +153,7 @@ def _row_to_dict(row: tuple) -> dict:
         sender_id,
         sender_name,
         text,
+        entities,
         topic_id,
         reply_to,
         is_service,
@@ -153,6 +166,7 @@ def _row_to_dict(row: tuple) -> dict:
         "sender_id": sender_id,
         "sender_name": sender_name,
         "text": text,
+        "entities": json.loads(entities) if entities is not None else None,
         "topic_id": topic_id,
         "reply_to_msg_id": reply_to,
         "is_service": bool(is_service),
@@ -191,7 +205,7 @@ def lookup(
             return None
         (min_id,) = row
         rows = conn.execute(
-            "SELECT id, date, sender_id, sender_name, text,"
+            "SELECT id, date, sender_id, sender_name, text, entities,"
             " topic_id, reply_to_msg_id, is_service, grouped_id, media FROM messages"
             " WHERE chat_id = ? AND id >= ? AND id < ?"
             " ORDER BY id DESC LIMIT ?",
@@ -271,10 +285,10 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
         with conn:
             conn.executemany(
                 "INSERT OR REPLACE INTO messages"
-                " (chat_id, id, date, sender_id, sender_name, text,"
+                " (chat_id, id, date, sender_id, sender_name, text, entities,"
                 "  topic_id, reply_to_msg_id, is_service, grouped_id, media,"
                 "  fetched_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         chat_id,
@@ -283,6 +297,9 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
                         message["sender_id"],
                         message["sender_name"],
                         message["text"],
+                        json.dumps(message["entities"], ensure_ascii=False)
+                        if message["entities"] is not None
+                        else None,
                         message["topic_id"],
                         message["reply_to_msg_id"],
                         int(message["is_service"]),
