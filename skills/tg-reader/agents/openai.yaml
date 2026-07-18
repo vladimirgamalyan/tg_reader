@@ -1,0 +1,4 @@
+interface:
+  display_name: "Telegram Reader"
+  short_description: "Read Telegram messages by chat name via tg-reader"
+  default_prompt: "Use $tg-reader to read messages from a Telegram chat."
