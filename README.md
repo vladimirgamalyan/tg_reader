@@ -27,6 +27,9 @@ Or install it manually:
 uv tool install git+https://github.com/vladimirgamalyan/tg_reader.git
 ```
 
+If AI agents will use the tool, also install the [agent skill](#agent-skill)
+so they can discover it in future sessions.
+
 ## Commands
 
 - `tg-reader auth` — one-time interactive authorization, run manually by the
