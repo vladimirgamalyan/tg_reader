@@ -6,9 +6,12 @@ history reads are answered locally without spending Telegram requests, and
 other local applications can query the accumulated messages directly (the
 schema is documented in docs/PROJECT.md).
 
-The cache reflects the state at fetch time: messages edited or deleted in
-Telegram afterwards stay stale until the range is re-fetched (--no-cache).
-A request for the newest messages (offset_id == 0) is never served from the
+The cache reflects the state at fetch time: a message edited in Telegram
+afterwards keeps its old form until the range is re-fetched (--no-cache).
+A message deleted in Telegram is not dropped: the next fetch that proves its
+range complete marks it with a 'deleted' flag and keeps the row, so the local
+archive never loses a message it once saw and other readers can tell it is
+gone. A request for the newest messages (offset_id == 0) is never served from the
 cache, because only the server knows whether newer messages exist; only
 history pagination (--offset-id) can be served, and only when the requested
 window lies entirely inside one covered ID range.
@@ -29,7 +32,7 @@ CACHE_FILENAME = "cache.db"
 # Bumped when the on-disk schema changes. A database with a different
 # version is left untouched (other applications may still rely on it) and
 # the cache is skipped for the run.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # Time to wait for a concurrent writer (another tg-reader run or an
 # external application) before treating the database as unavailable.
 BUSY_TIMEOUT = 5.0
@@ -48,6 +51,7 @@ CREATE TABLE messages (
     grouped_id      INTEGER,
     media           TEXT,              -- 'media' object of the 'read' output as JSON
     entities        TEXT,              -- 'entities' array of the 'read' output as JSON
+    deleted         INTEGER NOT NULL DEFAULT 0,  -- 1 once a later fetch proved it gone
     fetched_at      TEXT NOT NULL,     -- ISO 8601 UTC time the row was written
     PRIMARY KEY (chat_id, id)
 );
@@ -86,9 +90,14 @@ def _connect(create: bool) -> sqlite3.Connection | None:
         if version == 1:
             _migrate_v1_to_v2(conn)
             _migrate_v2_to_v3(conn)
+            _migrate_v3_to_v4(conn)
             return conn
         if version == 2:
             _migrate_v2_to_v3(conn)
+            _migrate_v3_to_v4(conn)
+            return conn
+        if version == 3:
+            _migrate_v3_to_v4(conn)
             return conn
         tables = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version != 0 or tables != 0:
@@ -119,6 +128,15 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     with conn:
         conn.execute("ALTER TABLE messages ADD COLUMN entities TEXT")
         conn.execute("PRAGMA user_version = 3")
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add the deletion tombstone column introduced in schema v4."""
+    with conn:
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute("PRAGMA user_version = 4")
 
 
 def _warn(error: Exception) -> None:
@@ -159,6 +177,7 @@ def _row_to_dict(row: tuple) -> dict:
         is_service,
         grouped_id,
         media,
+        deleted,
     ) = row
     return {
         "id": msg_id,
@@ -170,6 +189,7 @@ def _row_to_dict(row: tuple) -> dict:
         "topic_id": topic_id,
         "reply_to_msg_id": reply_to,
         "is_service": bool(is_service),
+        "deleted": bool(deleted),
         "grouped_id": grouped_id,
         "media": json.loads(media) if media is not None else None,
     }
@@ -206,7 +226,8 @@ def lookup(
         (min_id,) = row
         rows = conn.execute(
             "SELECT id, date, sender_id, sender_name, text, entities,"
-            " topic_id, reply_to_msg_id, is_service, grouped_id, media FROM messages"
+            " topic_id, reply_to_msg_id, is_service, grouped_id, media, deleted"
+            " FROM messages"
             " WHERE chat_id = ? AND id >= ? AND id < ?"
             " ORDER BY id DESC LIMIT ?",
             (chat_id, min_id, offset_id, limit),
@@ -273,7 +294,10 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
     """Record fetched messages and the covered ID range; never raises.
 
     Called after every successful network fetch, --no-cache runs included,
-    so the archive keeps growing and edited messages get refreshed.
+    so the archive keeps growing and edited messages get refreshed. Within
+    a range the fetch proves complete, a cached message the fetch did not
+    return is now gone from Telegram: it is flagged deleted rather than
+    dropped, keeping the local archive complete.
     """
     try:
         conn = _connect(create=True)
@@ -282,13 +306,26 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
         return
     try:
         fetched_at = datetime.now(timezone.utc).isoformat()
+        interval = _covered_interval(messages, limit, offset_id)
         with conn:
+            if interval is not None:
+                lower, upper = interval
+                # Tombstone the whole proven-complete window, then let the
+                # upsert below clear the flag on every message that still
+                # exists; only genuinely deleted IDs stay marked. A message
+                # returned again in a later complete fetch is un-flagged, so a
+                # transiently hidden message heals itself.
+                conn.execute(
+                    "UPDATE messages SET deleted = 1"
+                    " WHERE chat_id = ? AND id >= ? AND id <= ?",
+                    (chat_id, lower, upper),
+                )
             conn.executemany(
                 "INSERT OR REPLACE INTO messages"
                 " (chat_id, id, date, sender_id, sender_name, text, entities,"
                 "  topic_id, reply_to_msg_id, is_service, grouped_id, media,"
-                "  fetched_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  deleted, fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                 [
                     (
                         chat_id,
@@ -312,9 +349,8 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
                     for message in messages
                 ],
             )
-            interval = _covered_interval(messages, limit, offset_id)
             if interval is not None:
-                _merge_coverage(conn, chat_id, *interval)
+                _merge_coverage(conn, chat_id, lower, upper)
     except sqlite3.Error as error:
         _warn(error)
     finally:

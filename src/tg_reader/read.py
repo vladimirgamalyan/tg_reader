@@ -85,6 +85,9 @@ def message_to_dict(message) -> dict:
         "topic_id": _topic_id(reply_to),
         "reply_to_msg_id": message.reply_to_msg_id,
         "is_service": getattr(message, "action", None) is not None,
+        # A message returned by the network exists by definition; the cache
+        # flips this to true only for a since-deleted message it still holds.
+        "deleted": False,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
     }

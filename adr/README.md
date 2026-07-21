@@ -49,3 +49,7 @@ Before proposing or re-proposing a decision that feels debatable, check
   SQLite
 - [0003](0003-message-entities-field.md) — Expose message formatting through a
   single extensible `entities` field
+- [0004](0004-ship-agent-skill-in-repo.md) — Ship the agent skill in the repo,
+  installed by the install prompt
+- [0005](0005-tombstone-deleted-messages.md) — Tombstone deleted messages
+  instead of dropping them

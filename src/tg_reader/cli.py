@@ -97,6 +97,10 @@ output schema (JSON array on stdout, newest message first), each element:
                              when the message is not a reply
   is_service       bool      true for Telegram service/action messages
                              (joins, pins, title changes, topic events)
+  deleted          bool      true only for a cached message a later fetch
+                             found gone from Telegram (kept in the local
+                             archive and flagged); always false for messages
+                             fetched fresh from the network
   grouped_id       int|null  album ID, see 'albums' below; null for
                              standalone messages
   media            obj|null  downloadable attachment metadata; null when
@@ -127,9 +131,12 @@ local cache:
   An --offset-id request whose whole window is already covered by the
   cache is answered from it without contacting Telegram; a request for
   the newest messages (no --offset-id) always contacts Telegram. Cached
-  entries reflect the state at fetch time: messages edited or deleted
-  in Telegram later may be returned in their old form. Pass --no-cache
-  to force a network fetch (the result still refreshes the cache).
+  entries reflect the state at fetch time: a message edited in Telegram
+  later keeps its old text until the range is re-fetched. A message deleted
+  in Telegram is not dropped but flagged: 'deleted' turns true once a later
+  fetch proves its range complete, and the message stays in the cache (and
+  in this output) carrying that flag. Pass --no-cache to force a network
+  fetch (the result still refreshes the cache).
   Other applications may read the database directly; the schema is
   documented in the project docs.
 

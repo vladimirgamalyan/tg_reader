@@ -143,6 +143,7 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
     "topic_id": 777,
     "reply_to_msg_id": 12340,
     "is_service": false,
+    "deleted": false,
     "grouped_id": 13579246812345678,
     "media": {
       "type": "document",
@@ -173,6 +174,10 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
 - `is_service` — `true` for Telegram service/action messages (joins, pins,
   title changes, topic events), `false` for regular messages including
   media-only messages.
+- `deleted` — `true` only for a cached message that a later fetch found gone
+  from Telegram: it is kept in the local archive and flagged rather than
+  dropped (see "Local message cache"). Always `false` for messages fetched
+  fresh from the network, which exist by definition.
 - `grouped_id` — shared album ID. An album (several photos/files sent
   together) is several separate messages, each with its own `id` and its own
   `media`; the caption is carried by only one of them. Clients render such
@@ -306,11 +311,16 @@ Serving rules:
   (no `--offset-id`) always goes to the network — only the server knows
   whether new messages have arrived. A cache hit skips the whole networked
   path, including the inter-process lock and pacing.
-- Cached data reflects the state at fetch time: messages edited or deleted
-  in Telegram later are returned in their old form until the range is
-  re-fetched. `--no-cache` forces a network fetch; the result still
-  refreshes the cache, so it also serves as the manual "refresh this range"
-  switch.
+- Cached data reflects the state at fetch time: a message edited in Telegram
+  later keeps its old form until the range is re-fetched. A message deleted
+  in Telegram is not dropped but flagged: within a range a fetch proves
+  complete, any message the cache still holds but the fetch did not return is
+  marked `deleted = true` and kept, so the archive stays complete and other
+  readers can tell the message is gone. A message that reappears in a later
+  complete fetch is un-flagged, so a transiently hidden message heals itself.
+  `--no-cache` forces a network fetch; the result still refreshes the cache
+  (including these deletion flags), so it also serves as the manual "refresh
+  this range" switch.
 - A positive `CHAT_ID` is ambiguous (user, channel or small group). The
   cache resolves it only when exactly one of the candidate chats has cached
   data; otherwise the run falls through to the normal network resolution.
@@ -321,15 +331,17 @@ Serving rules:
   Known older tg-reader schemas may be migrated in place when the change is
   compatible with preserving existing cached rows.
 
-Schema (`PRAGMA user_version = 3`):
+Schema (`PRAGMA user_version = 4`):
 
 - `messages` — one row per message, primary key `(chat_id, id)`. Columns
   `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `sender_id`,
   `sender_name`, `text`, `topic_id`, `reply_to_msg_id`, `is_service`,
   `grouped_id` carry the same values as the `read` JSON output; `media` and
   `entities` are the respective `read` output values serialized as JSON (NULL
-  when the message has none); `fetched_at` is the ISO 8601 UTC time the row
-  was written. A re-fetched message replaces its stored row.
+  when the message has none); `deleted` is a `0/1` flag set to `1` once a
+  later complete fetch found the message gone from Telegram; `fetched_at` is
+  the ISO 8601 UTC time the row was written. A re-fetched message replaces
+  its stored row.
 - `coverage` — per-chat inclusive `[min_id, max_id]` ranges within which the
   cache holds every message that existed server-side at fetch time
   (GetHistory returns consecutive messages, so one response proves a whole
@@ -386,8 +398,8 @@ path), filename sanitization (path traversal, Windows-forbidden characters,
 reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
 no-media and message-not-found errors), and the message cache (store/lookup
-roundtrip, serving rules, coverage merging, chat ID disambiguation,
-corrupt-file and foreign-schema fallback).
+roundtrip, serving rules, coverage merging, deletion tombstoning, chat ID
+disambiguation, schema migration, corrupt-file and foreign-schema fallback).
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
 Ubuntu and Windows for every push to `main` and every pull request. Since users

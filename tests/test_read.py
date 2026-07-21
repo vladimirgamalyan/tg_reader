@@ -189,6 +189,7 @@ def test_message_to_dict_all_fields():
         "topic_id": None,
         "reply_to_msg_id": None,
         "is_service": False,
+        "deleted": False,
         "grouped_id": None,
         "media": None,
     }
@@ -208,6 +209,7 @@ def test_message_to_dict_nulls():
         "topic_id": None,
         "reply_to_msg_id": None,
         "is_service": False,
+        "deleted": False,
         "grouped_id": None,
         "media": None,
     }

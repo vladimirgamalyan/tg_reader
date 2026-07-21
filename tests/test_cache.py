@@ -24,6 +24,7 @@ def make_message(msg_id, **overrides):
         "topic_id": None,
         "reply_to_msg_id": None,
         "is_service": False,
+        "deleted": False,
         "grouped_id": None,
         "media": None,
     }
@@ -225,7 +226,7 @@ def test_schema_v1_is_migrated(cache_dir):
     assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
     conn = sqlite3.connect(str(cache.cache_path()))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
     finally:
         conn.close()
 
@@ -287,9 +288,136 @@ def test_schema_v2_is_migrated(cache_dir):
     assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
     conn = sqlite3.connect(str(cache.cache_path()))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
     finally:
         conn.close()
+
+
+def test_schema_v3_is_migrated(cache_dir):
+    # A v3 database predates the 'deleted' column; migrating it must keep the
+    # existing row and expose it as not deleted (the old form, not an error).
+    conn = sqlite3.connect(str(cache.cache_path()))
+    conn.executescript(
+        """
+        CREATE TABLE messages (
+            chat_id         INTEGER NOT NULL,
+            id              INTEGER NOT NULL,
+            date            TEXT,
+            sender_id       INTEGER,
+            sender_name     TEXT,
+            text            TEXT,
+            topic_id        INTEGER,
+            reply_to_msg_id INTEGER,
+            is_service      INTEGER NOT NULL,
+            grouped_id      INTEGER,
+            media           TEXT,
+            entities        TEXT,
+            fetched_at      TEXT NOT NULL,
+            PRIMARY KEY (chat_id, id)
+        );
+        CREATE TABLE coverage (
+            chat_id INTEGER NOT NULL,
+            min_id  INTEGER NOT NULL,
+            max_id  INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, min_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO messages"
+        " (chat_id, id, date, sender_id, sender_name, text, topic_id,"
+        "  reply_to_msg_id, is_service, grouped_id, media, entities, fetched_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            -100123,
+            5,
+            "2026-07-03T12:34:56+00:00",
+            111222333,
+            "John Doe",
+            "old message",
+            None,
+            None,
+            0,
+            None,
+            None,
+            None,
+            "2026-07-03T12:35:00+00:00",
+        ),
+    )
+    conn.execute("INSERT INTO coverage VALUES (?, ?, ?)", (-100123, 5, 5))
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+    assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
+    conn = sqlite3.connect(str(cache.cache_path()))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    finally:
+        conn.close()
+
+
+# --- deletion tombstones ---
+
+
+def test_full_page_marks_nothing_deleted(cache_dir):
+    cache.store(
+        -100123,
+        [make_message(7), make_message(6), make_message(5)],
+        limit=3,
+        offset_id=8,
+    )
+
+    result = cache.lookup([-100123], 3, 8)
+
+    assert [message["id"] for message in result] == [7, 6, 5]
+    assert all(message["deleted"] is False for message in result)
+
+
+def test_refetch_marks_missing_message_as_deleted(cache_dir):
+    cache.store(
+        -100123,
+        [make_message(7), make_message(6), make_message(5)],
+        limit=3,
+        offset_id=8,
+    )
+    # Message 6 is deleted server-side; the refetch no longer returns it, but
+    # its range is still proven complete, so 6 is flagged rather than dropped.
+    cache.store(-100123, [make_message(7), make_message(5)], limit=3, offset_id=8)
+
+    result = cache.lookup([-100123], 3, 8)
+
+    assert [(message["id"], message["deleted"]) for message in result] == [
+        (7, False),
+        (6, True),
+        (5, False),
+    ]
+
+
+def test_returned_message_clears_deleted_flag(cache_dir):
+    cache.store(-100123, [make_message(6), make_message(5)], limit=2, offset_id=7)
+    # A refetch misses 6, so it is tombstoned...
+    cache.store(-100123, [make_message(5)], limit=2, offset_id=7)
+    assert cache.lookup([-100123], 2, 7)[0]["deleted"] is True
+    # ...but a later fetch returns 6 again (it was only transiently hidden).
+    cache.store(-100123, [make_message(6), make_message(5)], limit=2, offset_id=7)
+
+    result = cache.lookup([-100123], 2, 7)
+
+    assert [(message["id"], message["deleted"]) for message in result] == [
+        (6, False),
+        (5, False),
+    ]
+
+
+def test_empty_paginated_fetch_marks_whole_window_deleted(cache_dir):
+    cache.store(-100123, [make_message(5)], limit=3, offset_id=6)  # covers [1, 5]
+    # Nothing below offset_id exists any more: the whole window is gone.
+    cache.store(-100123, [], limit=3, offset_id=6)
+
+    result = cache.lookup([-100123], 3, 6)
+
+    assert [(message["id"], message["deleted"]) for message in result] == [(5, True)]
 
 
 # --- failure behavior ---
