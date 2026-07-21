@@ -17,6 +17,7 @@ def make_message(msg_id, **overrides):
     message = {
         "id": msg_id,
         "date": "2026-07-03T12:34:56+00:00",
+        "edit_date": None,
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": f"message {msg_id}",
@@ -70,6 +71,13 @@ def test_store_then_lookup_preserves_entities(cache_dir):
     cache.store(-100123, [make_message(5, entities=entities)], limit=1, offset_id=6)
 
     assert cache.lookup([-100123], 1, 6)[0]["entities"] == entities
+
+
+def test_store_then_lookup_preserves_edit_date(cache_dir):
+    edited = "2026-07-03T13:00:00+00:00"
+    cache.store(-100123, [make_message(5, edit_date=edited)], limit=1, offset_id=6)
+
+    assert cache.lookup([-100123], 1, 6)[0]["edit_date"] == edited
 
 
 def test_refetch_replaces_cached_message(cache_dir):
@@ -226,7 +234,7 @@ def test_schema_v1_is_migrated(cache_dir):
     assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
     conn = sqlite3.connect(str(cache.cache_path()))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     finally:
         conn.close()
 
@@ -288,7 +296,7 @@ def test_schema_v2_is_migrated(cache_dir):
     assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
     conn = sqlite3.connect(str(cache.cache_path()))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     finally:
         conn.close()
 
@@ -352,7 +360,74 @@ def test_schema_v3_is_migrated(cache_dir):
     assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
     conn = sqlite3.connect(str(cache.cache_path()))
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    finally:
+        conn.close()
+
+
+def test_schema_v4_is_migrated(cache_dir):
+    # A v4 database predates the 'edit_date' column; migrating it must keep the
+    # existing row and expose edit_date as null (the old form, not an error).
+    conn = sqlite3.connect(str(cache.cache_path()))
+    conn.executescript(
+        """
+        CREATE TABLE messages (
+            chat_id         INTEGER NOT NULL,
+            id              INTEGER NOT NULL,
+            date            TEXT,
+            sender_id       INTEGER,
+            sender_name     TEXT,
+            text            TEXT,
+            topic_id        INTEGER,
+            reply_to_msg_id INTEGER,
+            is_service      INTEGER NOT NULL,
+            grouped_id      INTEGER,
+            media           TEXT,
+            entities        TEXT,
+            deleted         INTEGER NOT NULL DEFAULT 0,
+            fetched_at      TEXT NOT NULL,
+            PRIMARY KEY (chat_id, id)
+        );
+        CREATE TABLE coverage (
+            chat_id INTEGER NOT NULL,
+            min_id  INTEGER NOT NULL,
+            max_id  INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, min_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO messages"
+        " (chat_id, id, date, sender_id, sender_name, text, topic_id,"
+        "  reply_to_msg_id, is_service, grouped_id, media, entities, deleted,"
+        "  fetched_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            -100123,
+            5,
+            "2026-07-03T12:34:56+00:00",
+            111222333,
+            "John Doe",
+            "old message",
+            None,
+            None,
+            0,
+            None,
+            None,
+            None,
+            0,
+            "2026-07-03T12:35:00+00:00",
+        ),
+    )
+    conn.execute("INSERT INTO coverage VALUES (?, ?, ?)", (-100123, 5, 5))
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+    assert cache.lookup([-100123], 1, 6) == [make_message(5, text="old message")]
+    conn = sqlite3.connect(str(cache.cache_path()))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     finally:
         conn.close()
 

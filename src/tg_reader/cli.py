@@ -77,6 +77,8 @@ output schema (JSON array on stdout, newest message first), each element:
                              fetch the media
   date             str|null  ISO 8601 timestamp in UTC,
                              e.g. "2026-07-03T12:34:56+00:00"
+  edit_date        str|null  ISO 8601 UTC time the message was last edited;
+                             null if it was never edited
   sender_id        int|null  numeric ID of the sender (marked format)
   sender_name      str|null  display name of the sender
   text             str|null  message text or media caption; null if none

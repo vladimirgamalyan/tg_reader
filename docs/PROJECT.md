@@ -134,6 +134,7 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
   {
     "id": 12345,
     "date": "2026-07-03T12:34:56+00:00",
+    "edit_date": null,
     "sender_id": 111222333,
     "sender_name": "John Doe",
     "text": "message text or media caption; null if none",
@@ -154,6 +155,9 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
   }
   ```
 
+- `edit_date` — ISO 8601 UTC time the message was last edited, or `null` when
+  it was never edited. A cached message from before this field existed also
+  reads `null` until its range is re-fetched.
 - `entities` — hyperlinks found in `text`, in document order; `null` when the
   message has none. Telegram delivers links as message entities, and `text`
   keeps only their displayed text, so a link hidden behind a caption (e.g. the
@@ -331,12 +335,13 @@ Serving rules:
   Known older tg-reader schemas may be migrated in place when the change is
   compatible with preserving existing cached rows.
 
-Schema (`PRAGMA user_version = 4`):
+Schema (`PRAGMA user_version = 5`):
 
 - `messages` — one row per message, primary key `(chat_id, id)`. Columns
-  `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `sender_id`,
-  `sender_name`, `text`, `topic_id`, `reply_to_msg_id`, `is_service`,
-  `grouped_id` carry the same values as the `read` JSON output; `media` and
+  `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `edit_date`,
+  `sender_id`, `sender_name`, `text`, `topic_id`, `reply_to_msg_id`,
+  `is_service`, `grouped_id` carry the same values as the `read` JSON output
+  (`edit_date` is NULL when the message was never edited); `media` and
   `entities` are the respective `read` output values serialized as JSON (NULL
   when the message has none); `deleted` is a `0/1` flag set to `1` once a
   later complete fetch found the message gone from Telegram; `fetched_at` is

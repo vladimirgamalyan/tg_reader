@@ -63,6 +63,7 @@ def make_message(**overrides):
     defaults = {
         "id": 12345,
         "date": datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc),
+        "edit_date": None,
         "sender_id": 111222333,
         "sender": User(id=111222333, first_name="John", last_name="Doe"),
         "message": "message text",
@@ -182,6 +183,7 @@ def test_message_to_dict_all_fields():
     assert message_to_dict(make_message()) == {
         "id": 12345,
         "date": "2026-07-03T12:34:56+00:00",
+        "edit_date": None,
         "sender_id": 111222333,
         "sender_name": "John Doe",
         "text": "message text",
@@ -202,6 +204,7 @@ def test_message_to_dict_nulls():
     assert message_to_dict(message) == {
         "id": 12345,
         "date": None,
+        "edit_date": None,
         "sender_id": None,
         "sender_name": None,
         "text": None,
@@ -239,6 +242,11 @@ def test_message_to_dict_media_and_album():
         "mime_type": "application/pdf",
         "size_bytes": 2048,
     }
+
+
+def test_message_to_dict_edit_date_is_exposed():
+    message = make_message(edit_date=datetime(2026, 7, 3, 13, 0, 0, tzinfo=timezone.utc))
+    assert message_to_dict(message)["edit_date"] == "2026-07-03T13:00:00+00:00"
 
 
 def test_message_to_dict_empty_text_is_null():

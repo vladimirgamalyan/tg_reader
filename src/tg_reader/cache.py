@@ -32,7 +32,7 @@ CACHE_FILENAME = "cache.db"
 # Bumped when the on-disk schema changes. A database with a different
 # version is left untouched (other applications may still rely on it) and
 # the cache is skipped for the run.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # Time to wait for a concurrent writer (another tg-reader run or an
 # external application) before treating the database as unavailable.
 BUSY_TIMEOUT = 5.0
@@ -42,6 +42,7 @@ CREATE TABLE messages (
     chat_id         INTEGER NOT NULL,  -- marked chat ID (Bot-API style)
     id              INTEGER NOT NULL,  -- message ID within the chat
     date            TEXT,              -- ISO 8601 UTC timestamp
+    edit_date       TEXT,              -- ISO 8601 UTC last-edit timestamp, NULL if never edited
     sender_id       INTEGER,
     sender_name     TEXT,
     text            TEXT,
@@ -91,13 +92,19 @@ def _connect(create: bool) -> sqlite3.Connection | None:
             _migrate_v1_to_v2(conn)
             _migrate_v2_to_v3(conn)
             _migrate_v3_to_v4(conn)
+            _migrate_v4_to_v5(conn)
             return conn
         if version == 2:
             _migrate_v2_to_v3(conn)
             _migrate_v3_to_v4(conn)
+            _migrate_v4_to_v5(conn)
             return conn
         if version == 3:
             _migrate_v3_to_v4(conn)
+            _migrate_v4_to_v5(conn)
+            return conn
+        if version == 4:
+            _migrate_v4_to_v5(conn)
             return conn
         tables = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version != 0 or tables != 0:
@@ -139,6 +146,18 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA user_version = 4")
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """Add the edit-timestamp column introduced in schema v5.
+
+    Rows written before this migration keep NULL edit_date (unknown), which
+    is indistinguishable from a never-edited message; both mean "no known
+    edit". Re-fetching the range refreshes the value.
+    """
+    with conn:
+        conn.execute("ALTER TABLE messages ADD COLUMN edit_date TEXT")
+        conn.execute("PRAGMA user_version = 5")
+
+
 def _warn(error: Exception) -> None:
     print(f"warning: message cache unavailable ({error})", file=sys.stderr)
 
@@ -168,6 +187,7 @@ def _row_to_dict(row: tuple) -> dict:
     (
         msg_id,
         date,
+        edit_date,
         sender_id,
         sender_name,
         text,
@@ -182,6 +202,7 @@ def _row_to_dict(row: tuple) -> dict:
     return {
         "id": msg_id,
         "date": date,
+        "edit_date": edit_date,
         "sender_id": sender_id,
         "sender_name": sender_name,
         "text": text,
@@ -225,7 +246,7 @@ def lookup(
             return None
         (min_id,) = row
         rows = conn.execute(
-            "SELECT id, date, sender_id, sender_name, text, entities,"
+            "SELECT id, date, edit_date, sender_id, sender_name, text, entities,"
             " topic_id, reply_to_msg_id, is_service, grouped_id, media, deleted"
             " FROM messages"
             " WHERE chat_id = ? AND id >= ? AND id < ?"
@@ -322,15 +343,16 @@ def store(chat_id: int, messages: list[dict], limit: int, offset_id: int) -> Non
                 )
             conn.executemany(
                 "INSERT OR REPLACE INTO messages"
-                " (chat_id, id, date, sender_id, sender_name, text, entities,"
-                "  topic_id, reply_to_msg_id, is_service, grouped_id, media,"
-                "  deleted, fetched_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                " (chat_id, id, date, edit_date, sender_id, sender_name, text,"
+                "  entities, topic_id, reply_to_msg_id, is_service, grouped_id,"
+                "  media, deleted, fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                 [
                     (
                         chat_id,
                         message["id"],
                         message["date"],
+                        message["edit_date"],
                         message["sender_id"],
                         message["sender_name"],
                         message["text"],

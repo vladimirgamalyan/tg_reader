@@ -78,6 +78,7 @@ def message_to_dict(message) -> dict:
     return {
         "id": message.id,
         "date": message.date.isoformat() if message.date else None,
+        "edit_date": message.edit_date.isoformat() if message.edit_date else None,
         "sender_id": message.sender_id,
         "sender_name": utils.get_display_name(message.sender) or None,
         "text": message.message or None,
