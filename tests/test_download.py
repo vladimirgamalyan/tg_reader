@@ -181,6 +181,47 @@ async def test_download_failure_removes_part_file(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+async def test_download_replaces_leftover_part_from_killed_run(tmp_path):
+    # A .part left by a previous run killed mid-download must not be delivered
+    # as the result. Telethon refuses to overwrite an existing file and writes
+    # to a "<name> (1).part" sibling instead, so the leftover has to be cleared
+    # first for the fresh download to land on the real path.
+    client = make_client(make_media_message())
+
+    async def refuse_to_overwrite(message, file):
+        path = Path(file)
+        if path.exists():  # Telethon's _get_proper_filename anti-overwrite rule
+            path = path.with_name(f"{path.stem} (1){path.suffix}")
+        path.write_bytes(b"fresh data")
+        return str(path)
+
+    client.download_media = AsyncMock(side_effect=refuse_to_overwrite)
+    stale = tmp_path / "-100123_555_report.pdf.part"
+    stale.write_bytes(b"stale partial")
+
+    result = await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    target = tmp_path / "-100123_555_report.pdf"
+    assert target.read_bytes() == b"fresh data"
+    assert result["size_bytes"] == len(b"fresh data")
+    # No orphaned sibling from the anti-overwrite rename, no surviving leftover.
+    assert not (tmp_path / "-100123_555_report.pdf (1).part").exists()
+    assert not stale.exists()
+
+
+async def test_download_unusable_output_dir_is_permanent_error(tmp_path):
+    # An --output path that is not a usable directory (here: an existing file)
+    # is a permanent local failure, not a transient network one.
+    client = make_client(make_media_message())
+    not_a_dir = tmp_path / "output"
+    not_a_dir.write_bytes(b"i am a file")
+
+    with pytest.raises(DownloadError, match="not usable"):
+        await download_to_dir(client, -100123, 555, not_a_dir, max_size_mb=100)
+
+    client.download_media.assert_not_called()
+
+
 # --- run_download: flood protection wiring ---
 
 
@@ -208,6 +249,22 @@ async def test_run_download_returns_summary(config_dir, tmp_path, mocker):
 
     assert result["message_id"] == 555
     assert (output_dir / "-100123_555_report.pdf").exists()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_download_unusable_output_is_permanent_not_retry(
+    config_dir, tmp_path, mocker
+):
+    # A filesystem failure inside the session must surface as a permanent
+    # DownloadError (exit 1), not be swallowed by the session layer's broad
+    # OSError handler and reported as "retry later" (exit 2).
+    client = make_connected_client(mocker, make_media_message())
+    not_a_dir = tmp_path / "output"
+    not_a_dir.write_bytes(b"i am a file")
+
+    with pytest.raises(DownloadError):
+        await run_download(-100123, 555, not_a_dir, max_size_mb=100)
+
     client.disconnect.assert_awaited_once()
 
 

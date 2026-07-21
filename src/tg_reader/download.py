@@ -55,9 +55,24 @@ async def download_to_dir(
             f"Media of message {msg_id} is {size / _MB:.1f} MB, which exceeds "
             f"the {max_size_mb} MB limit; pass --max-size to raise it."
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / build_filename(chat_id, msg_id, info)
     part = target.with_name(target.name + ".part")
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Remove any .part left by a previous run killed mid-download, and
+        # confirm the directory is writable. Telethon refuses to overwrite an
+        # existing file: a surviving .part would divert this download to a
+        # "<name> (1).part" sibling, leaving the stale part to be delivered as
+        # the result. Doing the filesystem check here also keeps the session
+        # layer's broad OSError handler from misreporting an unwritable
+        # --output directory as "cannot reach Telegram" (a retryable error).
+        part.unlink(missing_ok=True)
+        part.touch()
+        part.unlink()
+    except OSError as error:
+        raise DownloadError(
+            f"Output directory {output_dir} is not usable ({error})."
+        ) from error
     try:
         downloaded = await client.download_media(message, file=str(part))
         if downloaded is None:
@@ -69,7 +84,12 @@ async def download_to_dir(
                 f"{downloaded_size / _MB:.1f} MB, which exceeds the "
                 f"{max_size_mb} MB limit."
             )
-        os.replace(part, target)
+        try:
+            os.replace(part, target)
+        except OSError as error:
+            raise DownloadError(
+                f"Cannot move the download into place at {target} ({error})."
+            ) from error
     finally:
         part.unlink(missing_ok=True)
     return {
