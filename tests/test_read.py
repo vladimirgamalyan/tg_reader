@@ -245,7 +245,9 @@ def test_message_to_dict_media_and_album():
 
 
 def test_message_to_dict_edit_date_is_exposed():
-    message = make_message(edit_date=datetime(2026, 7, 3, 13, 0, 0, tzinfo=timezone.utc))
+    message = make_message(
+        edit_date=datetime(2026, 7, 3, 13, 0, 0, tzinfo=timezone.utc)
+    )
     assert message_to_dict(message)["edit_date"] == "2026-07-03T13:00:00+00:00"
 
 
