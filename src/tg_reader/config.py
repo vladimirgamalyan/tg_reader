@@ -61,4 +61,10 @@ def load_config() -> dict | None:
 def save_config(api_id: int, api_hash: str) -> None:
     ensure_config_dir()
     data = {"api_id": api_id, "api_hash": api_hash}
-    config_path().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path = config_path()
+    # Write-then-rename, like the throttle state file: a crash mid-write
+    # must not leave a corrupt config.json behind (it reads as "not
+    # authorized" and forces the credentials to be typed in again).
+    temp_path = path.with_name(path.name + ".tmp")
+    temp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temp_path.replace(path)

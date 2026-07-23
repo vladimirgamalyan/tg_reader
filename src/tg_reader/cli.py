@@ -247,6 +247,15 @@ def positive_int_type(value: str) -> int:
     return number
 
 
+def offset_id_type(value: str) -> int:
+    # 0 is the documented default ("start from the newest"); an agent
+    # passing it explicitly must not be rejected.
+    number = _parse_int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return number
+
+
 def limit_type(value: str) -> int:
     limit = _parse_int(value)
     if not 1 <= limit <= MAX_LIMIT:
@@ -302,9 +311,10 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser.add_argument(
         "--offset-id",
         metavar="MSG_ID",
-        type=positive_int_type,
+        type=offset_id_type,
         default=0,
-        help="fetch only messages older than this positive message ID (default: newest)",
+        help="fetch only messages older than this message ID; "
+        "0 starts from the newest (default: %(default)s)",
     )
 
     download_parser = subparsers.add_parser(
@@ -375,6 +385,15 @@ def main(argv: list[str] | None = None) -> int:
         # quietly with the conventional code instead of a traceback.
         print("interrupted", file=sys.stderr)
         return 130
+    except EOFError:
+        # The 'auth' prompts (api_id, phone number, code) read stdin; when
+        # it is closed (Ctrl+Z / Ctrl+D, piped input running dry) the raw
+        # "EOFError:" message would not explain what happened.
+        print(
+            "error: stdin closed while waiting for interactive input",
+            file=sys.stderr,
+        )
+        return 1
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 1

@@ -31,10 +31,16 @@ TYPE_EXTENSIONS = {
     "document": ".bin",
 }
 
-# Telegram-specific MIME types the platform mimetypes table does not know.
+# Telegram-specific MIME types the stdlib mimetypes table does not know.
 _MIME_EXTENSIONS = {
     "application/x-tgsticker": ".tgs",
 }
+
+# The stdlib's builtin MIME table only. The module-level mimetypes
+# functions merge in platform sources (on Windows, the registry), which
+# makes generated extensions machine-dependent; the same media must get
+# the same name everywhere (ADR-0011).
+_MIMETYPES = mimetypes.MimeTypes()
 
 # Cap on the sanitized name (extension included), before the
 # '<chat_id>_<msg_id>_' prefix.
@@ -153,6 +159,11 @@ def _sanitize(name: str) -> str:
         # drops trailing spaces and dots, so the reported name would not
         # match the name on disk.
         name = (stem + extension).rstrip(". ")
+    if not name.strip("_"):
+        # A name reduced to replacement underscores (every character was
+        # forbidden or invisible) carries no information; report it as
+        # empty so the generated fallback name applies, same as dots-only.
+        return ""
     return name
 
 
@@ -168,18 +179,18 @@ def _extension(info: dict) -> str:
     """Extension for a generated filename, consistent with the MIME type.
 
     The per-type default is kept when the MIME type is missing, unknown or
-    agrees with it (image/jpeg must stay '.jpg' even though the platform
-    MIME table may list '.jpe' first); otherwise the MIME type wins, so an
-    unnamed 'audio/flac' track does not get a misleading '.mp3'. Telegram's
-    own MIME types the platform table cannot know (.tgs animated stickers)
-    are resolved through _MIME_EXTENSIONS first.
+    agrees with it (image/jpeg must stay '.jpg' even though the MIME table
+    may list '.jpe' first); otherwise the MIME type wins, so an unnamed
+    'audio/flac' track does not get a misleading '.mp3'. Telegram's own
+    MIME types the stdlib table cannot know (.tgs animated stickers) are
+    resolved through _MIME_EXTENSIONS first.
     """
     extension = TYPE_EXTENSIONS[info["type"]]
     if info["mime_type"]:
         override = _MIME_EXTENSIONS.get(info["mime_type"])
         if override:
             return override
-        valid = mimetypes.guess_all_extensions(info["mime_type"])
+        valid = _MIMETYPES.guess_all_extensions(info["mime_type"])
         if valid and extension not in valid:
             return valid[0]
     return extension

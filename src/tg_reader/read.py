@@ -62,10 +62,22 @@ async def resolve_chat(client: TelegramClient, chat_id: int):
             return client.session.get_input_entity(peer)
         except ValueError:
             continue
-    marked_ids = {utils.get_peer_id(peer) for peer in peers}
+    # Pick dialog matches by candidate priority, not dialog recency: the
+    # cache path above tries the candidates in order, so when an ambiguous
+    # positive ID matches several dialogs, a later cache-hit run must
+    # resolve the same peer as the run that walked the dialogs (and
+    # populated the cache). The walk can stop early only once the
+    # top-priority candidate is matched.
+    marked_ids = [utils.get_peer_id(peer) for peer in peers]
+    matches = {}
     async for dialog in client.iter_dialogs():
         if dialog.id in marked_ids:
-            return dialog.input_entity
+            matches[dialog.id] = dialog.input_entity
+            if dialog.id == marked_ids[0]:
+                break
+    for marked_id in marked_ids:
+        if marked_id in matches:
+            return matches[marked_id]
     raise ChatNotFoundError(
         f"Chat {chat_id} not found among this account's dialogs. "
         "Check the ID and make sure the account is a member of the chat."

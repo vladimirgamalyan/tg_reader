@@ -25,6 +25,13 @@ def test_save_and_load_roundtrip(config_dir):
     assert config.load_config() == {"api_id": 1, "api_hash": "hash"}
 
 
+def test_save_config_leaves_no_temp_file(config_dir):
+    # The write-then-rename must not leave its .tmp sibling behind.
+    config.save_config(1, "hash")
+
+    assert [path.name for path in config_dir.iterdir()] == [config.CONFIG_FILENAME]
+
+
 def test_load_config_corrupt_json_treated_as_missing(config_dir):
     (config_dir / config.CONFIG_FILENAME).write_text("{not json", encoding="utf-8")
 

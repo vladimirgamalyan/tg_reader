@@ -157,6 +157,27 @@ async def test_resolve_chat_raw_id_matches_channel_dialog():
     client.iter_dialogs.assert_called_once()
 
 
+async def test_resolve_chat_raw_id_prefers_user_over_more_recent_channel_dialog():
+    # A raw positive ID can numerically match both a user and a channel.
+    # The candidate order (user first) must decide, not dialog recency:
+    # otherwise this run would resolve the channel while the next one,
+    # hitting the cache this walk populated, would resolve the user.
+    client = AsyncMock()
+    client.session = MemorySession()
+    dialogs = [
+        SimpleNamespace(
+            id=utils.get_peer_id(PeerChannel(456)),
+            input_entity="channel-input-entity",
+        ),
+        SimpleNamespace(id=456, input_entity="user-input-entity"),
+    ]
+    client.iter_dialogs = MagicMock(return_value=async_iter(dialogs))
+
+    result = await resolve_chat(client, 456)
+
+    assert result == "user-input-entity"
+
+
 async def test_resolve_chat_raw_id_not_found_with_real_session():
     client = AsyncMock()
     client.session = MemorySession()
@@ -551,6 +572,31 @@ async def test_run_read_rpc_timeout_maps_to_retry_later(config_dir, mocker):
         await run_read(-1001234567890, limit=1, offset_id=0)
 
     client.disconnect.assert_awaited_once()
+
+
+async def test_run_read_disconnect_failure_does_not_mask_retry_error(
+    config_dir, mocker
+):
+    # A disconnect failing in the session teardown (likely the same dying
+    # network that broke the command) must not replace the mapped
+    # RetryLaterError: the CLI would report a permanent error (exit 1)
+    # for a transient condition.
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = FloodWaitError(request=None, capture=77)
+    client.disconnect.side_effect = OSError("socket already closed")
+
+    with pytest.raises(RetryLaterError):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+
+async def test_run_read_disconnect_failure_does_not_mask_result(config_dir, mocker):
+    client = make_connected_client(mocker)
+    client.get_messages.return_value = [make_message()]
+    client.disconnect.side_effect = OSError("socket already closed")
+
+    result = await run_read(-1001234567890, limit=1, offset_id=0)
+
+    assert [message["id"] for message in result] == [12345]
 
 
 async def test_run_read_refuses_while_flood_wait_active(config_dir, mocker):

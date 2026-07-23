@@ -109,6 +109,13 @@ async def telegram_session():
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error
         finally:
-            await client.disconnect()
+            # A failing disconnect (likely the same dying network that broke
+            # the command) must not replace the in-flight error: a bare
+            # OSError escaping here would turn an already-mapped
+            # RetryLaterError into a permanent CLI failure.
+            try:
+                await client.disconnect()
+            except OSError:
+                pass
     finally:
         lock.release()

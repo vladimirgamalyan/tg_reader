@@ -13,7 +13,7 @@ from telethon.errors import AuthKeyDuplicatedError, FloodWaitError, ServerError
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
-from tg_reader.auth import _load_or_prompt_credentials, run_auth
+from tg_reader.auth import _load_or_prompt_credentials, _prompt_api_id, run_auth
 from tg_reader.errors import PermanentError
 from tg_reader.throttle import RetryLaterError
 
@@ -52,6 +52,17 @@ def test_load_or_prompt_credentials_hides_api_hash(
 
 def test_load_or_prompt_credentials_reports_stored_credentials(config_dir):
     assert _load_or_prompt_credentials() == (1, "hash", False)
+
+
+def test_prompt_api_id_rejects_non_positive(monkeypatch, capsys):
+    # 0 and negatives would only fail later with an obscure Telethon or
+    # server-side error; the prompt must re-ask instead.
+    answers = iter(["0", "-5", "abc", "123"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+
+    assert _prompt_api_id() == 123
+
+    assert capsys.readouterr().out.count("try again") == 3
 
 
 async def test_run_auth_holds_lock_around_the_session(config_dir, mocker):
@@ -113,6 +124,30 @@ async def test_run_auth_saves_prompted_credentials_after_success(
     client.start.assert_awaited_once()
 
 
+async def test_run_auth_saves_prompted_credentials_even_if_get_me_fails(
+    tmp_path, monkeypatch, mocker
+):
+    # After a successful login the session file is already authorized: a
+    # network failure in the cosmetic get_me() must not leave the prompted
+    # credentials unsaved, or the next auth run would ask for them again.
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "123")
+    mocker.patch("tg_reader.auth.getpass.getpass", return_value=" hash ")
+    client = make_client(mocker)
+    client.is_user_authorized.return_value = False
+    client.get_me.side_effect = ServerError(
+        request=None, message="server error", code=500
+    )
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(RetryLaterError):
+        await run_auth()
+
+    assert config.load_config() == {"api_id": 123, "api_hash": "hash"}
+    client.start.assert_awaited_once()
+
+
 async def test_run_auth_does_not_save_prompted_credentials_on_login_failure(
     tmp_path, monkeypatch, mocker
 ):
@@ -145,6 +180,22 @@ async def test_run_auth_dead_session_is_deleted(config_dir, mocker):
 
     assert not session_file.exists()
     client.disconnect.assert_awaited_once()
+
+
+async def test_run_auth_disconnect_failure_does_not_mask_error(config_dir, mocker):
+    # Same guard as in session.py: a failing disconnect must not replace
+    # the in-flight error, or a transient failure would be reported as a
+    # permanent one.
+    client = make_client(mocker)
+    client.connect.side_effect = ConnectionError("boom")
+    client.disconnect.side_effect = OSError("socket already closed")
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_auth()
+
+    lock.release.assert_called_once()
 
 
 async def test_run_auth_refuses_while_flood_wait_active(config_dir, mocker):

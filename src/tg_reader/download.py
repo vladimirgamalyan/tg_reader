@@ -105,13 +105,12 @@ async def download_to_dir(
     part = target.with_name(target.name + ".part")
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        # Remove any .part left by a previous run killed mid-download, and
-        # confirm the directory is writable. Telethon refuses to overwrite an
-        # existing file: a surviving .part would divert this download to a
-        # "<name> (1).part" sibling, leaving the stale part to be delivered as
-        # the result. Doing the filesystem check here also keeps the session
-        # layer's broad OSError handler from misreporting an unwritable
-        # --output directory as "cannot reach Telegram" (a retryable error).
+        # Probe the directory with a touch/unlink round-trip: an unwritable
+        # --output must fail here, as a permanent error, not from inside the
+        # transfer where the session layer's broad OSError handler would
+        # misreport it as "cannot reach Telegram" (a retryable error). The
+        # leading unlink clears any .part left by a previous run killed
+        # mid-download, so the probe exercises creating a fresh file.
         part.unlink(missing_ok=True)
         part.touch()
         part.unlink()
@@ -154,12 +153,25 @@ async def download_to_dir(
                 f"Cannot move the download into place at {target} ({error})."
             ) from error
     finally:
-        part.unlink(missing_ok=True)
+        # Best-effort cleanup: a failure here (e.g. an antivirus still
+        # holding the .part open) must not replace the download error being
+        # raised - a bare OSError would be misread by the session layer as
+        # a transient network failure and retried forever. The next run's
+        # probe clears or reports the leftover.
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
     return {
         "message_id": msg_id,
         "type": info["type"],
         "file": str(target.resolve()),
-        "size_bytes": target.stat().st_size,
+        # The size measured on the .part before the rename: a stat() of the
+        # final path would sit outside the OSError classification above, so
+        # a file vanishing right after the rename (antivirus quarantine)
+        # would be misreported as a transient network failure and retried
+        # forever.
+        "size_bytes": downloaded_size,
     }
 
 

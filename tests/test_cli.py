@@ -34,11 +34,22 @@ def test_read_rejects_zero_chat_id():
     assert excinfo.value.code == 1
 
 
-def test_read_rejects_non_positive_offset_id():
+def test_read_rejects_negative_offset_id():
     with pytest.raises(SystemExit) as excinfo:
-        cli.build_parser().parse_args(["read", "-100123", "--offset-id", "0"])
+        cli.build_parser().parse_args(["read", "-100123", "--offset-id", "-5"])
 
     assert excinfo.value.code == 1
+
+
+def test_read_accepts_zero_offset_id(mocker):
+    # 0 is the "start from the newest" default; an agent passing it
+    # explicitly must not be rejected.
+    run_read = mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+
+    exit_code = cli.main(["read", "-100123", "--offset-id", "0"])
+
+    assert exit_code == 0
+    run_read.assert_awaited_once_with(-100123, 20, 0)
 
 
 def test_read_passes_arguments_to_run_read(mocker, capsys):
@@ -112,6 +123,20 @@ def test_keyboard_interrupt_exits_130(mocker, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "interrupted" in captured.err
+
+
+def test_eof_during_interactive_prompt_exits_1_with_clear_message(mocker, capsys):
+    # Ctrl+Z / stdin running dry during an 'auth' prompt raises EOFError;
+    # the raw "error: EOFError:" message would not explain what happened.
+    mocker.patch("tg_reader.cli.run_auth", new=MagicMock())
+    mocker.patch("tg_reader.cli.asyncio.run", side_effect=EOFError)
+
+    exit_code = cli.main(["auth"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "stdin closed" in captured.err
 
 
 def test_download_retry_later_exits_2(mocker, capsys):

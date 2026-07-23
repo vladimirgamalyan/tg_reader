@@ -17,9 +17,15 @@ from .session import (
 def _prompt_api_id() -> int:
     while True:
         try:
-            return int(input("api_id: "))
+            api_id = int(input("api_id: "))
         except ValueError:
             print("api_id must be a number, try again.")
+            continue
+        if api_id > 0:
+            return api_id
+        # Catch it here rather than let the login fail later with an
+        # obscure Telethon or server-side error.
+        print("api_id must be a positive number, try again.")
 
 
 def _load_or_prompt_credentials() -> tuple[int, str, bool]:
@@ -69,16 +75,20 @@ async def run_auth() -> None:
         try:
             await client.connect()
             if await client.is_user_authorized():
-                me = await client.get_me()
+                # Save as soon as the credentials are proven, before the
+                # cosmetic get_me(): a network failure there must not leave
+                # an authorized session with unsaved credentials (the next
+                # auth run would prompt for them all over again).
                 _save_prompted_credentials(api_id, api_hash, credentials_were_prompted)
+                me = await client.get_me()
                 print(
                     f"Already authorized as {utils.get_display_name(me)} (id={me.id})."
                 )
                 return
             # Interactive login flow: phone number -> confirmation code -> 2FA password.
             await client.start()
-            me = await client.get_me()
             _save_prompted_credentials(api_id, api_hash, credentials_were_prompted)
+            me = await client.get_me()
             print(f"Authorized as {utils.get_display_name(me)} (id={me.id}).")
             print(f"Session stored at {config.session_path()}")
         except FLOOD_WAIT_ERRORS as error:
@@ -93,7 +103,12 @@ async def run_auth() -> None:
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error
         finally:
-            await client.disconnect()
+            # Same as in session.py: a failing disconnect must not replace
+            # the in-flight error with a bare OSError.
+            try:
+                await client.disconnect()
+            except OSError:
+                pass
         if invalid_session_error is not None:
             # A dead session (revoked, AUTH_KEY_DUPLICATED) fails the same
             # way on every connect; deleting the file lets the next run log

@@ -96,6 +96,20 @@ def test_corrupt_state_is_ignored(config_dir):
     throttle.check_flood_deadline()
 
 
+def test_wrong_typed_state_is_ignored(config_dir):
+    # JSON-valid damage (e.g. a hand-edited file) must not brick the tool
+    # with a TypeError any more than syntactically corrupt JSON does.
+    write_state(
+        config_dir,
+        flood_until="not a number",
+        flood_seconds=[60],
+        last_request_at=None,
+    )
+
+    throttle.check_flood_deadline()
+    throttle.pace()
+
+
 def test_record_flood_wait(config_dir):
     before = time.time()
 

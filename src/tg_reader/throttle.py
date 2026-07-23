@@ -58,11 +58,21 @@ def _load_state() -> dict:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         # A state file damaged e.g. by a killed process must not brick the
         # tool; losing throttle state is harmless.
         return {}
+    if not isinstance(data, dict):
+        return {}
+    # Guard against JSON-valid damage (e.g. a hand-edited file) as well: a
+    # non-numeric value would raise TypeError in the arithmetic below on
+    # every run until the file is deleted.
+    return {
+        key: value
+        for key, value in data.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
 
 
 def _save_state(state: dict) -> None:

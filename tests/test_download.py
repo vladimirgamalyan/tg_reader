@@ -6,6 +6,7 @@ same pattern as tests/test_read.py.
 
 import errno
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -204,20 +205,9 @@ async def test_download_failure_removes_part_file(tmp_path):
 
 
 async def test_download_replaces_leftover_part_from_killed_run(tmp_path):
-    # A .part left by a previous run killed mid-download must not be delivered
-    # as the result. Telethon refuses to overwrite an existing file and writes
-    # to a "<name> (1).part" sibling instead, so the leftover has to be cleared
-    # first for the fresh download to land on the real path.
-    client = make_client(make_media_message())
-
-    async def refuse_to_overwrite(message, file, progress_callback=None):
-        path = Path(file)
-        if path.exists():  # Telethon's _get_proper_filename anti-overwrite rule
-            path = path.with_name(f"{path.stem} (1){path.suffix}")
-        path.write_bytes(b"fresh data")
-        return str(path)
-
-    client.download_media = AsyncMock(side_effect=refuse_to_overwrite)
+    # A .part left by a previous run killed mid-download must not survive
+    # or leak into the result: the fresh download replaces it.
+    client = make_client(make_media_message(), payload=b"fresh data")
     stale = tmp_path / "-100123_555_report.pdf.part"
     stale.write_bytes(b"stale partial")
 
@@ -226,9 +216,58 @@ async def test_download_replaces_leftover_part_from_killed_run(tmp_path):
     target = tmp_path / "-100123_555_report.pdf"
     assert target.read_bytes() == b"fresh data"
     assert result["size_bytes"] == len(b"fresh data")
-    # No orphaned sibling from the anti-overwrite rename, no surviving leftover.
-    assert not (tmp_path / "-100123_555_report.pdf (1).part").exists()
     assert not stale.exists()
+
+
+async def test_download_cleanup_failure_does_not_mask_download_error(tmp_path, mocker):
+    # If removing the .part in the cleanup fails too (e.g. an antivirus
+    # holding it open on Windows), the original permanent error must
+    # propagate - not be replaced by the cleanup's OSError, which the
+    # session layer would misreport as a transient network failure.
+    client = make_client(make_media_message())
+
+    async def locked_write(message, file, progress_callback=None):
+        Path(file).write_bytes(b"partial")
+        raise PermissionError(errno.EACCES, "Access is denied", file)
+
+    client.download_media = AsyncMock(side_effect=locked_write)
+    original_unlink = Path.unlink
+
+    def failing_unlink(path, missing_ok=False):
+        # The writability probe's empty file is deleted normally; only the
+        # partially written download behaves as locked.
+        if path.exists() and path.read_bytes() == b"partial":
+            raise PermissionError(errno.EACCES, "Access is denied", str(path))
+        return original_unlink(path, missing_ok=missing_ok)
+
+    mocker.patch.object(Path, "unlink", failing_unlink)
+
+    with pytest.raises(DownloadError, match="Cannot write"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    # The cleanup path was actually exercised: the locked .part survived.
+    part = tmp_path / "-100123_555_report.pdf.part"
+    assert part.read_bytes() == b"partial"
+
+
+async def test_download_target_vanishing_after_move_does_not_fail(tmp_path, mocker):
+    # An antivirus may quarantine the freshly renamed file: the summary
+    # must come from the bytes actually transferred, not from a stat() of
+    # the final path - that OSError would escape past the local-error
+    # classification and be misreported by the session layer as "cannot
+    # reach Telegram" (endless retries).
+    client = make_client(make_media_message())
+    original_replace = os.replace
+
+    def replace_then_quarantine(src, dst):
+        original_replace(src, dst)
+        Path(dst).unlink()
+
+    mocker.patch("tg_reader.download.os.replace", replace_then_quarantine)
+
+    result = await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    assert result["size_bytes"] == 4
 
 
 async def test_download_disk_full_is_permanent_error(tmp_path):

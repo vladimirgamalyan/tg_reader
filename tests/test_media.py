@@ -241,6 +241,15 @@ def test_build_filename_dots_only_name_falls_back_to_generated():
     assert result == "-100123_555_photo.jpg"
 
 
+def test_build_filename_invisible_only_name_falls_back_to_generated():
+    # A name that sanitizes to nothing but replacement underscores carries
+    # no information, same as a dots-only name.
+    zwsp = chr(0x200B)
+    result = build_filename(-100123, 555, info(media_type="photo", filename=zwsp * 2))
+
+    assert result == "-100123_555_photo.jpg"
+
+
 def test_build_filename_unnamed_photo():
     result = build_filename(-100123, 555, info(media_type="photo"))
 
