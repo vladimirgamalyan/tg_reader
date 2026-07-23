@@ -276,6 +276,17 @@ def test_build_filename_unnamed_audio_mime_wins_over_type_default():
     assert result == "-100123_555_audio.aac"
 
 
+def test_build_filename_unnamed_animated_sticker_gets_tgs_extension():
+    # application/x-tgsticker (gzipped Lottie) is unknown to the platform
+    # mimetypes table; without the explicit override the file would get the
+    # misleading per-type default '.webp'.
+    result = build_filename(
+        -100123, 555, info(media_type="sticker", mime_type="application/x-tgsticker")
+    )
+
+    assert result == "-100123_555_sticker.tgs"
+
+
 def test_build_filename_unnamed_photo_keeps_jpg_for_jpeg_mime():
     # image/jpeg maps to several extensions ('.jpe' may be listed first):
     # the default must be kept whenever it is valid for the MIME type.

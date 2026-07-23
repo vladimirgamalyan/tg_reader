@@ -31,6 +31,11 @@ TYPE_EXTENSIONS = {
     "document": ".bin",
 }
 
+# Telegram-specific MIME types the platform mimetypes table does not know.
+_MIME_EXTENSIONS = {
+    "application/x-tgsticker": ".tgs",
+}
+
 # Cap on the sanitized name (extension included), before the
 # '<chat_id>_<msg_id>_' prefix.
 # Counted in UTF-8 bytes, not characters: filesystem limits (e.g. 255 bytes
@@ -165,10 +170,15 @@ def _extension(info: dict) -> str:
     The per-type default is kept when the MIME type is missing, unknown or
     agrees with it (image/jpeg must stay '.jpg' even though the platform
     MIME table may list '.jpe' first); otherwise the MIME type wins, so an
-    unnamed 'audio/flac' track does not get a misleading '.mp3'.
+    unnamed 'audio/flac' track does not get a misleading '.mp3'. Telegram's
+    own MIME types the platform table cannot know (.tgs animated stickers)
+    are resolved through _MIME_EXTENSIONS first.
     """
     extension = TYPE_EXTENSIONS[info["type"]]
     if info["mime_type"]:
+        override = _MIME_EXTENSIONS.get(info["mime_type"])
+        if override:
+            return override
         valid = mimetypes.guess_all_extensions(info["mime_type"])
         if valid and extension not in valid:
             return valid[0]
