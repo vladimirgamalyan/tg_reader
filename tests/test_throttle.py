@@ -123,6 +123,10 @@ def test_record_flood_wait(config_dir):
 def test_record_flood_wait_preserves_old_state_when_temp_write_fails(
     config_dir, mocker
 ):
+    # A failing state write (disk full) must not raise: record_flood_wait
+    # runs inside an except clause, where an escaping OSError would replace
+    # the RetryLaterError being raised and turn a retryable failure into a
+    # permanent one. The old state must survive (write-then-rename).
     write_state(config_dir, flood_until=12345.0)
     original_write_text = type(config_dir).write_text
 
@@ -133,10 +137,19 @@ def test_record_flood_wait_preserves_old_state_when_temp_write_fails(
 
     mocker.patch.object(type(config_dir), "write_text", fail_temp_write)
 
-    with pytest.raises(OSError, match="disk full"):
-        throttle.record_flood_wait(60)
+    throttle.record_flood_wait(60)
 
     assert read_state(config_dir)["flood_until"] == 12345.0
+
+
+def test_pace_survives_unwritable_state(config_dir, mocker):
+    # Losing throttle state is harmless; an unwritable state file must not
+    # fail an otherwise working run.
+    mocker.patch.object(
+        type(config_dir), "write_text", side_effect=OSError("read-only")
+    )
+
+    throttle.pace()
 
 
 # --- pacing ---

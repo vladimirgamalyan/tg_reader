@@ -302,6 +302,14 @@ resolve the chat automatically:
 3. If still not found, exit with a clear error — the account must actually be
    a member of the chat.
 
+The session cache holds every entity the account has seen in server
+responses (message senders, forward authors, ...), not just dialogs, so
+step 1 can resolve an ID that step 2 would never find. Reading such a peer
+succeeds (possibly with an empty message list) even though a fresh session
+would fail with "chat not found". This is an accepted tradeoff (ADR-0012):
+verifying dialog membership on every cache hit would cost the dialog walk
+the cache exists to avoid.
+
 ## Flood protection
 
 Reading history is a low-risk operation, but ignoring server-assigned

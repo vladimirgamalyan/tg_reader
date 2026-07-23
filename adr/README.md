@@ -62,3 +62,7 @@ Before proposing or re-proposing a decision that feels debatable, check
   as "not a reply"
 - [0010](0010-enforce-max-size-during-transfer.md) — Enforce `--max-size`
   during the transfer, not only around it
+- [0011](0011-builtin-mime-table-for-generated-extensions.md) — Use the stdlib
+  builtin MIME table for generated extensions
+- [0012](0012-accept-cache-resolution-of-non-dialog-peers.md) — Accept
+  session-cache resolution of non-dialog peers

@@ -46,6 +46,12 @@ async def resolve_chat(client: TelegramClient, chat_id: int):
     Tries the session entity cache first; on a miss, walks the account's
     dialogs, which also repopulates the cache so subsequent runs hit it.
 
+    The cache holds every entity the account has seen in server responses
+    (message senders, forward authors), not just dialogs, so a cache hit
+    can resolve a peer the dialog walk would not find. Accepted tradeoff:
+    verifying dialog membership on every cache hit would cost the dialog
+    walk the cache exists to avoid (ADR-0012).
+
     The cache is queried via client.session directly instead of
     client.get_input_entity(): the latter fabricates an InputPeerChat for any
     PeerChat without consulting the cache, which would break the dialog
@@ -139,6 +145,11 @@ def _entities(message) -> list[dict] | None:
         display = utf16[start : start + entity.length * 2].decode(
             "utf-16-le", errors="replace"
         )
+        if not display:
+            # A malformed entity whose range lies outside the text (or has
+            # zero length) selects nothing; emitting {"text": "", "url": ""}
+            # would be noise.
+            continue
         result.append({"type": entity_type, "text": display, "url": url or display})
     return result or None
 

@@ -139,6 +139,23 @@ def test_eof_during_interactive_prompt_exits_1_with_clear_message(mocker, capsys
     assert "stdin closed" in captured.err
 
 
+def test_broken_pipe_on_stdout_exits_quietly(mocker, monkeypatch, capsys):
+    # A consumer that stops reading early (e.g. piping into head) is not a
+    # tool failure: no error message, but a non-zero code because the
+    # output was truncated. stdout is closed so the interpreter's exit
+    # flush cannot raise again.
+    mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+    stdout = MagicMock()
+    stdout.write.side_effect = BrokenPipeError
+    monkeypatch.setattr(cli.sys, "stdout", stdout)
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == ""
+    stdout.close.assert_called_once()
+
+
 def test_download_retry_later_exits_2(mocker, capsys):
     mocker.patch(
         "tg_reader.cli.run_download",

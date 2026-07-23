@@ -67,7 +67,10 @@ CHAT_ID is a non-zero numeric chat/channel/user ID. Accepted forms:
 
 The account must be a member of the chat (or have the dialog open). Unknown
 IDs are looked up in the account's dialog list; if the chat is still not
-found, the command fails with an error on stderr.
+found, the command fails with an error on stderr. Chats and users this
+account has already encountered (for example the sender of a message in a
+group read earlier) resolve without an open dialog; reading such a peer
+can succeed and return an empty array instead of failing.
 """
 
 READ_EPILOG = """\
@@ -393,6 +396,16 @@ def main(argv: list[str] | None = None) -> int:
             "error: stdin closed while waiting for interactive input",
             file=sys.stderr,
         )
+        return 1
+    except BrokenPipeError:
+        # The stdout consumer closed the pipe early (e.g. piping into
+        # head): not a tool failure, so no scary error message — but the
+        # output was truncated, so the exit code stays non-zero. Closing
+        # stdout keeps the interpreter's exit flush from raising again.
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
         return 1
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)

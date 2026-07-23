@@ -28,6 +28,17 @@ def _prompt_api_id() -> int:
         print("api_id must be a positive number, try again.")
 
 
+def _prompt_api_hash() -> str:
+    print("api_hash input will not be displayed while you type.")
+    while True:
+        api_hash = getpass.getpass("api_hash: ").strip()
+        if api_hash:
+            return api_hash
+        # An accidental Enter would only fail later with an obscure
+        # server-side error; re-ask here, same as _prompt_api_id.
+        print("api_hash must not be empty, try again.")
+
+
 def _load_or_prompt_credentials() -> tuple[int, str, bool]:
     """Return API credentials and whether they were prompted in this run."""
     cfg = config.load_config()
@@ -36,8 +47,7 @@ def _load_or_prompt_credentials() -> tuple[int, str, bool]:
     print("API credentials are required.")
     print("Get them at https://my.telegram.org -> 'API development tools'.")
     api_id = _prompt_api_id()
-    print("api_hash input will not be displayed while you type.")
-    api_hash = getpass.getpass("api_hash: ").strip()
+    api_hash = _prompt_api_hash()
     return api_id, api_hash, True
 
 

@@ -76,11 +76,20 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    config.ensure_config_dir()
-    path = _state_path()
-    temp_path = path.with_name(path.name + ".tmp")
-    temp_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
-    temp_path.replace(path)
+    # Best-effort: losing throttle state is harmless (see _load_state), but
+    # failing to write it must not crash an otherwise working run — and in
+    # record_flood_wait it runs inside an except clause, where an OSError
+    # (e.g. the disk a download just filled) would replace the
+    # RetryLaterError being raised and turn a retryable failure into a
+    # permanent one.
+    try:
+        config.ensure_config_dir()
+        path = _state_path()
+        temp_path = path.with_name(path.name + ".tmp")
+        temp_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+        temp_path.replace(path)
+    except OSError:
+        pass
 
 
 def acquire_lock() -> FileLock:

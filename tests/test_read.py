@@ -428,6 +428,17 @@ def test_message_to_dict_entity_cutting_surrogate_pair_does_not_crash():
     ]
 
 
+def test_message_to_dict_entity_selecting_nothing_is_skipped():
+    # A malformed entity whose range lies outside the text selects nothing;
+    # {"text": "", "url": ""} would be noise.
+    message = make_message(
+        message="short",
+        entities=[MessageEntityUrl(offset=100, length=5)],
+    )
+
+    assert message_to_dict(message)["entities"] is None
+
+
 def test_message_to_dict_non_url_entities_are_skipped():
     message = make_message(
         message="bold text",

@@ -13,7 +13,12 @@ from telethon.errors import AuthKeyDuplicatedError, FloodWaitError, ServerError
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
-from tg_reader.auth import _load_or_prompt_credentials, _prompt_api_id, run_auth
+from tg_reader.auth import (
+    _load_or_prompt_credentials,
+    _prompt_api_hash,
+    _prompt_api_id,
+    run_auth,
+)
 from tg_reader.errors import PermanentError
 from tg_reader.throttle import RetryLaterError
 
@@ -52,6 +57,18 @@ def test_load_or_prompt_credentials_hides_api_hash(
 
 def test_load_or_prompt_credentials_reports_stored_credentials(config_dir):
     assert _load_or_prompt_credentials() == (1, "hash", False)
+
+
+def test_prompt_api_hash_rejects_empty(capsys, mocker):
+    # An accidental Enter (or whitespace) would only fail later with an
+    # obscure server-side error; the prompt must re-ask instead.
+    mocker.patch(
+        "tg_reader.auth.getpass.getpass", side_effect=["", "   ", " hash "]
+    )
+
+    assert _prompt_api_hash() == "hash"
+
+    assert capsys.readouterr().out.count("try again") == 2
 
 
 def test_prompt_api_id_rejects_non_positive(monkeypatch, capsys):
