@@ -131,6 +131,10 @@ def _topic_id(reply_to) -> int | None:
     """Return the forum topic root message ID for a reply header, if known."""
     if reply_to is None or not getattr(reply_to, "forum_topic", False):
         return None
+    if getattr(reply_to, "reply_to_peer_id", None) is not None:
+        # A cross-chat quote reply: reply_to_msg_id points into the other
+        # chat, so only reply_to_top_id can name the local topic root.
+        return getattr(reply_to, "reply_to_top_id", None)
     return getattr(reply_to, "reply_to_top_id", None) or getattr(
         reply_to, "reply_to_msg_id", None
     )
@@ -138,6 +142,10 @@ def _topic_id(reply_to) -> int | None:
 
 def _reply_to_msg_id(message, reply_to) -> int | None:
     """Return the ID of the message this one actually replies to.
+
+    A header carrying reply_to_peer_id is a cross-chat quote reply: its
+    reply_to_msg_id lives in that other chat, so reporting it would break
+    the documented meaning "an ID in this chat" (ADR-0009).
 
     Telegram marks every message inside a forum topic with a reply header:
     a plain post carries forum_topic and reply_to_msg_id pointing at the
@@ -147,6 +155,8 @@ def _reply_to_msg_id(message, reply_to) -> int | None:
     message itself looks identical to a plain post and is reported as not
     a reply (the Bot API makes the same tradeoff).
     """
+    if reply_to is not None and getattr(reply_to, "reply_to_peer_id", None) is not None:
+        return None
     if (
         reply_to is not None
         and getattr(reply_to, "forum_topic", False)

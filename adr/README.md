@@ -58,3 +58,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   headers as "not a reply"
 - [0008](0008-classify-local-file-errors-in-download.md) — Classify local
   filesystem errors during download as permanent
+- [0009](0009-cross-chat-reply-header.md) — Report cross-chat quote replies
+  as "not a reply"

@@ -98,7 +98,9 @@ output schema (JSON array on stdout, newest message first), each element:
   reply_to_msg_id  int|null  ID of the message this one replies to; null
                              when the message is not a reply. Plain posts
                              inside a forum topic are not replies, even
-                             though Telegram tags them with the topic root
+                             though Telegram tags them with the topic root.
+                             Quote replies to a message in another chat are
+                             also null: the target is not in this chat
   is_service       bool      true for Telegram service/action messages
                              (joins, pins, title changes, topic events)
   grouped_id       int|null  album ID, see 'albums' below; null for

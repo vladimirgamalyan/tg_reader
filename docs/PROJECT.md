@@ -172,7 +172,9 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   topic is recognized by the header also carrying the topic root separately
   (`reply_to_top_id`); the one unavoidable loss is that a genuine reply to
   the topic's root message looks identical to a plain post and is also
-  reported as `null` — the same tradeoff the Bot API makes.
+  reported as `null` — the same tradeoff the Bot API makes. A quote reply
+  to a message in another chat is also reported as `null`: its target ID
+  lives in that other chat and would point at the wrong message here.
 - `is_service` — `true` for Telegram service/action messages (joins, pins,
   title changes, topic events), `false` for regular messages including
   media-only messages.

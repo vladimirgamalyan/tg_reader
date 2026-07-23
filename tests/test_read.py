@@ -301,6 +301,49 @@ def test_message_to_dict_reply_inside_topic_is_kept():
     assert message_to_dict(message)["reply_to_msg_id"] == 101
 
 
+def test_message_to_dict_cross_chat_quote_is_not_a_reply():
+    # A quote reply to a message in another chat (reply_to_peer_id set):
+    # its reply_to_msg_id lives in that other chat, so reporting it as a
+    # same-chat reply would point consumers at the wrong message.
+    reply_to = MessageReplyHeader(
+        reply_to_msg_id=999, reply_to_peer_id=PeerChannel(42), quote=True
+    )
+    message = make_message(reply_to=reply_to, reply_to_msg_id=999)
+
+    result = message_to_dict(message)
+
+    assert result["reply_to_msg_id"] is None
+    assert result["topic_id"] is None
+
+
+def test_message_to_dict_cross_chat_quote_in_topic_keeps_topic_id():
+    # The topic root in reply_to_top_id is local even for a cross-chat
+    # quote; only the foreign reply_to_msg_id must be suppressed.
+    reply_to = MessageReplyHeader(
+        forum_topic=True,
+        reply_to_msg_id=999,
+        reply_to_peer_id=PeerChannel(42),
+        reply_to_top_id=100,
+    )
+    message = make_message(reply_to=reply_to, reply_to_msg_id=999)
+
+    result = message_to_dict(message)
+
+    assert result["reply_to_msg_id"] is None
+    assert result["topic_id"] == 100
+
+
+def test_message_to_dict_cross_chat_quote_topic_id_never_uses_foreign_id():
+    # Without reply_to_top_id the only candidate for the topic root is the
+    # foreign reply_to_msg_id, which lives in another chat: report null.
+    reply_to = MessageReplyHeader(
+        forum_topic=True, reply_to_msg_id=999, reply_to_peer_id=PeerChannel(42)
+    )
+    message = make_message(reply_to=reply_to, reply_to_msg_id=999)
+
+    assert message_to_dict(message)["topic_id"] is None
+
+
 def test_message_to_dict_service_marker():
     message = make_message(action=object(), message=None)
 
