@@ -2,7 +2,10 @@
 
 import argparse
 import asyncio
+import errno
 import json
+import os
+import re
 import sys
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -229,11 +232,17 @@ class Parser(argparse.ArgumentParser):
         self.exit(1, f"error: {message}\n")
 
 
+# ASCII digits with an optional minus sign only: int() alone also accepts
+# digit-grouping underscores ("1_0" == 10), surrounding whitespace, "+" and
+# non-ASCII decimal digits — a mistyped chat ID must be rejected, not
+# silently read as a different chat.
+_INTEGER = re.compile(r"-?[0-9]+")
+
+
 def _parse_int(value: str) -> int:
-    try:
-        return int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError("must be an integer") from None
+    if not _INTEGER.fullmatch(value):
+        raise argparse.ArgumentTypeError("must be an integer")
+    return int(value)
 
 
 def chat_id_type(value: str) -> int:
@@ -355,6 +364,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _exit_closed_stdout() -> int:
+    """Exit path for a stdout consumer that closed the pipe early.
+
+    Piping into e.g. 'head' is not a tool failure, so no scary error
+    message — but the output was truncated, so the exit code stays
+    non-zero. Closing stdout keeps the interpreter's exit flush from
+    raising again.
+    """
+    try:
+        sys.stdout.close()
+    except OSError:
+        pass
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     # On Windows, redirected stdout/stderr default to the legacy ANSI code
     # page, which cannot encode arbitrary text (emoji, paths etc.). JSON
@@ -398,14 +422,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     except BrokenPipeError:
-        # The stdout consumer closed the pipe early (e.g. piping into
-        # head): not a tool failure, so no scary error message — but the
-        # output was truncated, so the exit code stays non-zero. Closing
-        # stdout keeps the interpreter's exit flush from raising again.
-        try:
-            sys.stdout.close()
-        except OSError:
-            pass
+        return _exit_closed_stdout()
+    except OSError as error:
+        if os.name == "nt" and error.errno == errno.EINVAL:
+            # The Windows C runtime reports a write to a closed pipe as
+            # EINVAL instead of BrokenPipeError.
+            return _exit_closed_stdout()
+        print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)

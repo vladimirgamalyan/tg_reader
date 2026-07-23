@@ -1,5 +1,6 @@
 """Unit tests for CLI argument handling, output and exit codes."""
 
+import errno
 import json
 import re
 from pathlib import Path
@@ -30,6 +31,30 @@ def test_download_requires_output():
 def test_read_rejects_zero_chat_id():
     with pytest.raises(SystemExit) as excinfo:
         cli.build_parser().parse_args(["read", "0"])
+
+    assert excinfo.value.code == 1
+
+
+def test_read_rejects_underscored_chat_id():
+    # int() accepts digit-grouping underscores ("1_0" == 10): a mistyped
+    # ID must not silently read a different chat.
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["read", "1_0"])
+
+    assert excinfo.value.code == 1
+
+
+def test_read_rejects_non_ascii_digits_in_chat_id():
+    # int() also accepts non-ASCII decimal digits (here: Arabic-Indic "123").
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["read", "١٢٣"])
+
+    assert excinfo.value.code == 1
+
+
+def test_read_rejects_whitespace_padded_chat_id():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["read", " 5"])
 
     assert excinfo.value.code == 1
 
@@ -154,6 +179,38 @@ def test_broken_pipe_on_stdout_exits_quietly(mocker, monkeypatch, capsys):
     assert exit_code == 1
     assert capsys.readouterr().err == ""
     stdout.close.assert_called_once()
+
+
+def test_closed_pipe_einval_on_windows_exits_quietly(mocker, monkeypatch, capsys):
+    # The Windows C runtime reports a write to a closed pipe as
+    # OSError(EINVAL) instead of BrokenPipeError; the same quiet-exit
+    # treatment applies.
+    mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+    monkeypatch.setattr(cli.os, "name", "nt")
+    stdout = MagicMock()
+    stdout.write.side_effect = OSError(errno.EINVAL, "Invalid argument")
+    monkeypatch.setattr(cli.sys, "stdout", stdout)
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == ""
+    stdout.close.assert_called_once()
+
+
+def test_unclassified_oserror_still_reports_error(mocker, capsys):
+    # Only the closed-pipe EINVAL case exits quietly; any other OSError
+    # reaching the CLI boundary must still be reported.
+    mocker.patch("tg_reader.cli.run_read", new=MagicMock())
+    mocker.patch(
+        "tg_reader.cli.asyncio.run",
+        side_effect=OSError(errno.ENOSPC, "No space left on device"),
+    )
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 1
+    assert "OSError" in capsys.readouterr().err
 
 
 def test_download_retry_later_exits_2(mocker, capsys):

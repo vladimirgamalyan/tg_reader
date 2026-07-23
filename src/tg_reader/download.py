@@ -7,7 +7,7 @@ from pathlib import Path
 from telethon import TelegramClient
 
 from .errors import PermanentError
-from .media import build_filename, media_info
+from .media import build_filename, media_info, still_photo_thumb
 from .read import resolve_chat
 from .session import telegram_session
 
@@ -123,6 +123,7 @@ async def download_to_dir(
             downloaded = await client.download_media(
                 message,
                 file=str(part),
+                thumb=still_photo_thumb(message.media),
                 progress_callback=_abort_when_over_limit(
                     msg_id, max_size_bytes, max_size_mb
                 ),

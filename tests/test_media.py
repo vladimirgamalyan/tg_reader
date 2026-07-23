@@ -17,9 +17,15 @@ from telethon.tl.types import (
     PhotoSize,
     PhotoSizeProgressive,
     PhotoStrippedSize,
+    VideoSize,
 )
 
-from tg_reader.media import MAX_NAME_BYTES, build_filename, media_info
+from tg_reader.media import (
+    MAX_NAME_BYTES,
+    build_filename,
+    media_info,
+    still_photo_thumb,
+)
 
 
 def make_document(mime_type="application/pdf", size=1000, attributes=None):
@@ -39,13 +45,14 @@ def document_media(**kwargs):
     return MessageMediaDocument(document=make_document(**kwargs))
 
 
-def make_photo(sizes):
+def make_photo(sizes, video_sizes=None):
     return Photo(
         id=1,
         access_hash=2,
         file_reference=b"",
         date=datetime(2026, 7, 3, tzinfo=timezone.utc),
         sizes=sizes,
+        video_sizes=video_sizes,
         dc_id=2,
     )
 
@@ -90,6 +97,44 @@ def test_media_info_photo_without_usable_sizes():
     photo = make_photo([PhotoStrippedSize(type="i", bytes=b"tiny")])
 
     assert media_info(MessageMediaPhoto(photo=photo))["size_bytes"] is None
+
+
+# --- animated photos (a photo carrying video_sizes) ---
+
+
+def make_animated_photo():
+    # Telethon's default download pick for such a photo would be the video
+    # variant; media_info and download must both stick to the still image.
+    return make_photo(
+        [
+            PhotoSize(type="m", w=320, h=240, size=15000),
+            PhotoSize(type="y", w=1280, h=960, size=90000),
+        ],
+        video_sizes=[VideoSize(type="u", w=720, h=720, size=500000)],
+    )
+
+
+def test_media_info_animated_photo_reports_still_size():
+    info = media_info(MessageMediaPhoto(photo=make_animated_photo()))
+
+    assert info["type"] == "photo"
+    assert info["size_bytes"] == 90000
+
+
+def test_still_photo_thumb_pins_animated_photo_to_largest_still():
+    media = MessageMediaPhoto(photo=make_animated_photo())
+
+    assert still_photo_thumb(media) == "y"
+
+
+def test_still_photo_thumb_none_for_plain_photo():
+    photo = make_photo([PhotoSize(type="y", w=1280, h=960, size=90000)])
+
+    assert still_photo_thumb(MessageMediaPhoto(photo=photo)) is None
+
+
+def test_still_photo_thumb_none_for_document():
+    assert still_photo_thumb(document_media()) is None
 
 
 # --- media_info: document classification ---

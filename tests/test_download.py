@@ -21,7 +21,9 @@ from telethon.tl.types import (
     MessageMediaDocument,
     MessageMediaPhoto,
     Photo,
+    PhotoSize,
     PhotoStrippedSize,
+    VideoSize,
 )
 
 from tg_reader import config, throttle
@@ -57,6 +59,19 @@ def make_unknown_size_photo_message(msg_id=555):
     return SimpleNamespace(id=msg_id, media=MessageMediaPhoto(photo=photo))
 
 
+def make_animated_photo_message(msg_id=555):
+    photo = Photo(
+        id=1,
+        access_hash=2,
+        file_reference=b"",
+        date=datetime(2026, 7, 3, tzinfo=timezone.utc),
+        sizes=[PhotoSize(type="y", w=1280, h=960, size=1000)],
+        video_sizes=[VideoSize(type="u", w=720, h=720, size=5000)],
+        dc_id=2,
+    )
+    return SimpleNamespace(id=msg_id, media=MessageMediaPhoto(photo=photo))
+
+
 def make_client(message, payload=b"data"):
     """Client mock whose download_media writes payload to the target file."""
     client = AsyncMock()
@@ -66,7 +81,7 @@ def make_client(message, payload=b"data"):
     )
     client.get_messages.return_value = message
 
-    async def fake_download(message, file, progress_callback=None):
+    async def fake_download(message, file, thumb=None, progress_callback=None):
         Path(file).write_bytes(payload)
         return file
 
@@ -117,6 +132,27 @@ async def test_download_same_msg_id_from_different_chats_does_not_collide(tmp_pa
     assert (tmp_path / "-100456_555_report.pdf").exists()
 
 
+async def test_download_animated_photo_pinned_to_still_size(tmp_path):
+    # A photo carrying video_sizes would make Telethon download its video
+    # variant, while media_info reported the still image: the thumb
+    # argument pins the transfer to the reported still size.
+    client = make_client(make_animated_photo_message())
+
+    await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    assert client.download_media.call_args.kwargs["thumb"] == "y"
+
+
+async def test_download_document_passes_no_thumb(tmp_path):
+    # A non-None thumb for a document would download its thumbnail image
+    # instead of the document itself.
+    client = make_client(make_media_message())
+
+    await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+    assert client.download_media.call_args.kwargs["thumb"] is None
+
+
 async def test_download_message_not_found(tmp_path):
     client = make_client(None)
 
@@ -164,7 +200,7 @@ async def test_download_aborts_transfer_when_declared_size_lies(tmp_path):
     # callback, not billed in full and rejected only afterwards (ADR-0010).
     client = make_client(make_media_message(size=1000))
 
-    async def endless_download(message, file, progress_callback=None):
+    async def endless_download(message, file, thumb=None, progress_callback=None):
         with Path(file).open("wb") as stream:
             for _ in range(100):  # 100 MB if never aborted
                 stream.write(b"x" * MB)
@@ -192,7 +228,7 @@ async def test_download_no_file_returned_is_permanent_error(tmp_path):
 async def test_download_failure_removes_part_file(tmp_path):
     client = make_client(make_media_message())
 
-    async def failing_download(message, file, progress_callback=None):
+    async def failing_download(message, file, thumb=None, progress_callback=None):
         Path(file).write_bytes(b"partial")
         raise RuntimeError("connection lost")
 
@@ -226,7 +262,7 @@ async def test_download_cleanup_failure_does_not_mask_download_error(tmp_path, m
     # session layer would misreport as a transient network failure.
     client = make_client(make_media_message())
 
-    async def locked_write(message, file, progress_callback=None):
+    async def locked_write(message, file, thumb=None, progress_callback=None):
         Path(file).write_bytes(b"partial")
         raise PermissionError(errno.EACCES, "Access is denied", file)
 

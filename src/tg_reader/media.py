@@ -89,8 +89,16 @@ def media_info(media) -> dict | None:
 
 
 def _photo_size_bytes(photo: Photo) -> int | None:
-    """Byte size of the largest photo variant (the one that gets downloaded)."""
+    """Byte size of the largest still photo variant (the one downloaded)."""
+    return _best_still_size(photo)[1]
+
+
+def _best_still_size(
+    photo: Photo,
+) -> tuple[PhotoSize | PhotoSizeProgressive | None, int | None]:
+    """The largest downloadable still variant of a photo and its byte size."""
     best = None
+    best_bytes = None
     for size in photo.sizes:
         if isinstance(size, PhotoSizeProgressive):
             candidate = max(size.sizes, default=None)
@@ -99,9 +107,28 @@ def _photo_size_bytes(photo: Photo) -> int | None:
         else:
             # Thumbnail-only variants (stripped/cached) are never downloaded.
             continue
-        if candidate is not None and (best is None or candidate > best):
-            best = candidate
-    return best
+        if candidate is not None and (best_bytes is None or candidate > best_bytes):
+            best, best_bytes = size, candidate
+    return best, best_bytes
+
+
+def still_photo_thumb(media) -> str | None:
+    """Thumb selector pinning a photo download to its reported still image.
+
+    A photo carrying video_sizes (an animated photo) makes Telethon's
+    download_media pick the video variant — a VideoSize outranks every
+    still size in its default choice — while media_info describes the
+    still image (type 'photo', image/jpeg, still size). Passing the still
+    size's type as the 'thumb' argument pins download_media to the size
+    media_info measured. None for every other media: a thumb argument
+    would download a document's thumbnail instead of the document.
+    """
+    if not isinstance(media, MessageMediaPhoto) or not isinstance(media.photo, Photo):
+        return None
+    if not media.photo.video_sizes:
+        return None
+    best, _ = _best_still_size(media.photo)
+    return best.type if best is not None else None
 
 
 def _document_type(document: Document) -> str:
