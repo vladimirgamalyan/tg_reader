@@ -90,10 +90,14 @@ def check_flood_deadline() -> None:
     """Refuse to run while a persisted Telegram flood wait is active."""
     state = _load_state()
     remaining = state.get("flood_until", 0) - time.time()
-    if remaining > MAX_FLOOD_WAIT:
-        # An impossible deadline must not lock the tool out indefinitely:
-        # rewrite it as the maximum so it is guaranteed to expire.
-        remaining = MAX_FLOOD_WAIT
+    # A remaining wait longer than the flood Telegram actually assigned
+    # (or than the longest wait it realistically assigns) is impossible:
+    # the system clock jumped backwards or the state file is damaged.
+    # Cap and rewrite the deadline so a stale one cannot lock the tool
+    # out for longer than the flood itself.
+    longest = min(state.get("flood_seconds", MAX_FLOOD_WAIT), MAX_FLOOD_WAIT)
+    if remaining > longest:
+        remaining = longest
         state["flood_until"] = time.time() + remaining
         _save_state(state)
     if remaining > 0:
@@ -117,7 +121,12 @@ def pace() -> None:
 
 
 def record_flood_wait(seconds: float) -> None:
-    """Persist the FloodWait deadline so later runs refuse until it expires."""
+    """Persist the FloodWait deadline so later runs refuse until it expires.
+
+    The duration is stored alongside the deadline: after a backwards clock
+    jump it bounds how long the stale deadline may stall the tool.
+    """
     state = _load_state()
     state["flood_until"] = time.time() + seconds
+    state["flood_seconds"] = seconds
     _save_state(state)

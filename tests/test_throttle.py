@@ -71,6 +71,19 @@ def test_check_flood_deadline_impossible_deadline_is_capped(config_dir):
     assert flood_until <= time.time() + throttle.MAX_FLOOD_WAIT
 
 
+def test_check_flood_deadline_capped_by_recorded_flood_duration(config_dir):
+    # After a backwards clock jump the persisted deadline can exceed the
+    # flood Telegram actually assigned; the wait must not outlive the
+    # recorded flood duration.
+    write_state(config_dir, flood_until=time.time() + 3600, flood_seconds=60)
+
+    with pytest.raises(RetryLaterError) as excinfo:
+        throttle.check_flood_deadline()
+
+    assert excinfo.value.retry_after <= 60
+    assert read_state(config_dir)["flood_until"] <= time.time() + 60
+
+
 def test_check_flood_deadline_expired(config_dir):
     write_state(config_dir, flood_until=time.time() - 1)
 
@@ -88,8 +101,9 @@ def test_record_flood_wait(config_dir):
 
     throttle.record_flood_wait(60)
 
-    flood_until = read_state(config_dir)["flood_until"]
-    assert before + 60 <= flood_until <= time.time() + 60
+    state = read_state(config_dir)
+    assert before + 60 <= state["flood_until"] <= time.time() + 60
+    assert state["flood_seconds"] == 60
 
 
 def test_record_flood_wait_preserves_old_state_when_temp_write_fails(
