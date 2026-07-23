@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodPremiumWaitError, FloodWaitError
 from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
@@ -326,6 +326,28 @@ async def test_run_download_flood_wait_persists_deadline(config_dir, tmp_path, m
     client = make_connected_client(mocker, make_media_message())
     client.download_media = AsyncMock(
         side_effect=FloodWaitError(request=None, capture=77)
+    )
+
+    with pytest.raises(RetryLaterError):
+        await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)
+
+    state = json.loads(
+        (config_dir / throttle.STATE_FILENAME).read_text(encoding="utf-8")
+    )
+    assert state["flood_until"] > time.time()
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_download_premium_flood_wait_maps_to_retry_later(
+    config_dir, tmp_path, mocker
+):
+    # FLOOD_PREMIUM_WAIT (the free-account transfer speed limit on large
+    # downloads) is a sibling of FloodWaitError, not a subclass: it must
+    # still map to the retry contract and persist the deadline instead of
+    # falling through as a permanent error.
+    client = make_connected_client(mocker, make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=FloodPremiumWaitError(request=None, capture=77)
     )
 
     with pytest.raises(RetryLaterError):

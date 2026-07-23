@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from telethon import TelegramClient
 from telethon.errors import (
     AuthKeyDuplicatedError,
+    FloodPremiumWaitError,
     FloodWaitError,
     ServerError,
     TimedOutError,
@@ -25,6 +26,15 @@ from .errors import PermanentError
 class NotAuthorizedError(PermanentError):
     """Raised when the tool is used before 'tg-reader auth' has been run."""
 
+
+# Telegram-assigned waits that Telethon re-raises when they exceed
+# FLOOD_SLEEP_THRESHOLD. FloodPremiumWaitError (the free-account transfer
+# speed limit, seen on large media downloads) is a sibling of
+# FloodWaitError, not a subclass; both carry .seconds.
+FLOOD_WAIT_ERRORS = (
+    FloodWaitError,
+    FloodPremiumWaitError,
+)
 
 # When the connection dies mid-request and Telethon's automatic reconnect
 # fails, the pending request future receives the raw socket-level error, not
@@ -85,7 +95,7 @@ async def telegram_session():
                     "Not authorized. Run 'tg-reader auth' first (interactive)."
                 )
             yield client
-        except FloodWaitError as error:
+        except FLOOD_WAIT_ERRORS as error:
             throttle.record_flood_wait(error.seconds)
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds

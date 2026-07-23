@@ -3,11 +3,11 @@
 import getpass
 
 from telethon import TelegramClient, utils
-from telethon.errors import FloodWaitError
 
 from . import config, throttle
 from .errors import PermanentError
 from .session import (
+    FLOOD_WAIT_ERRORS,
     INVALID_SESSION_ERRORS,
     TRANSIENT_TELEGRAM_ERRORS,
     retry_later_from_transient_error,
@@ -81,7 +81,7 @@ async def run_auth() -> None:
             _save_prompted_credentials(api_id, api_hash, credentials_were_prompted)
             print(f"Authorized as {utils.get_display_name(me)} (id={me.id}).")
             print(f"Session stored at {config.session_path()}")
-        except FloodWaitError as error:
+        except FLOOD_WAIT_ERRORS as error:
             throttle.record_flood_wait(error.seconds)
             raise throttle.RetryLaterError(
                 "Telegram requested a flood wait", error.seconds
