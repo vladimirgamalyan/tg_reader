@@ -96,7 +96,9 @@ output schema (JSON array on stdout, newest message first), each element:
   topic_id         int|null  forum topic root message ID; null outside
                              forum topics or when Telegram does not expose it
   reply_to_msg_id  int|null  ID of the message this one replies to; null
-                             when the message is not a reply
+                             when the message is not a reply. Plain posts
+                             inside a forum topic are not replies, even
+                             though Telegram tags them with the topic root
   is_service       bool      true for Telegram service/action messages
                              (joins, pins, title changes, topic events)
   grouped_id       int|null  album ID, see 'albums' below; null for

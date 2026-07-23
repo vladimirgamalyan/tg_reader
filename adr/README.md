@@ -54,3 +54,5 @@ Before proposing or re-proposing a decision that feels debatable, check
 - [0005](0005-tombstone-deleted-messages.md) — Tombstone deleted messages
   instead of dropping them
 - [0006](0006-remove-message-cache.md) — Remove the local message cache
+- [0007](0007-forum-topic-reply-header.md) — Report forum-topic membership
+  headers as "not a reply"

@@ -84,7 +84,7 @@ def message_to_dict(message) -> dict:
         "text": message.message or None,
         "entities": _entities(message),
         "topic_id": _topic_id(reply_to),
-        "reply_to_msg_id": message.reply_to_msg_id,
+        "reply_to_msg_id": _reply_to_msg_id(message, reply_to),
         "is_service": getattr(message, "action", None) is not None,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
@@ -134,6 +134,26 @@ def _topic_id(reply_to) -> int | None:
     return getattr(reply_to, "reply_to_top_id", None) or getattr(
         reply_to, "reply_to_msg_id", None
     )
+
+
+def _reply_to_msg_id(message, reply_to) -> int | None:
+    """Return the ID of the message this one actually replies to.
+
+    Telegram marks every message inside a forum topic with a reply header:
+    a plain post carries forum_topic and reply_to_msg_id pointing at the
+    topic root without being a reply. A real reply inside a topic also
+    carries reply_to_top_id (the topic root), so its absence tells the two
+    apart. The one unavoidable loss: a genuine reply to the topic root
+    message itself looks identical to a plain post and is reported as not
+    a reply (the Bot API makes the same tradeoff).
+    """
+    if (
+        reply_to is not None
+        and getattr(reply_to, "forum_topic", False)
+        and getattr(reply_to, "reply_to_top_id", None) is None
+    ):
+        return None
+    return message.reply_to_msg_id
 
 
 async def fetch_messages(

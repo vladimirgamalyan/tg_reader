@@ -166,7 +166,13 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   reply to another message inside a topic while `topic_id` still points to the
   topic root.
 - `reply_to_msg_id` — ID of the message this one replies to; `null` when the
-  message is not a reply.
+  message is not a reply. Telegram tags every message inside a forum topic
+  with a reply header pointing at the topic root; that alone is topic
+  membership, not a reply, and is reported as `null`. A real reply inside a
+  topic is recognized by the header also carrying the topic root separately
+  (`reply_to_top_id`); the one unavoidable loss is that a genuine reply to
+  the topic's root message looks identical to a plain post and is also
+  reported as `null` — the same tradeoff the Bot API makes.
 - `is_service` — `true` for Telegram service/action messages (joins, pins,
   title changes, topic events), `false` for regular messages including
   media-only messages.

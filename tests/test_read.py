@@ -282,6 +282,25 @@ def test_message_to_dict_non_forum_reply_has_no_topic_id():
     assert message_to_dict(message)["topic_id"] is None
 
 
+def test_message_to_dict_plain_topic_post_is_not_a_reply():
+    # Telegram tags every message in a forum topic with a reply header
+    # pointing at the topic root; without reply_to_top_id that is topic
+    # membership, not a real reply.
+    reply_to = MessageReplyHeader(forum_topic=True, reply_to_msg_id=100)
+    message = make_message(reply_to=reply_to, reply_to_msg_id=100)
+
+    assert message_to_dict(message)["reply_to_msg_id"] is None
+
+
+def test_message_to_dict_reply_inside_topic_is_kept():
+    reply_to = MessageReplyHeader(
+        forum_topic=True, reply_to_msg_id=101, reply_to_top_id=100
+    )
+    message = make_message(reply_to=reply_to, reply_to_msg_id=101)
+
+    assert message_to_dict(message)["reply_to_msg_id"] == 101
+
+
 def test_message_to_dict_service_marker():
     message = make_message(action=object(), message=None)
 
