@@ -122,7 +122,11 @@ def _entities(message) -> list[dict] | None:
         else:
             continue
         start = entity.offset * 2
-        display = utf16[start : start + entity.length * 2].decode("utf-16-le")
+        # errors="replace": a malformed offset that cuts a surrogate pair in
+        # half must not crash the whole read over one entity.
+        display = utf16[start : start + entity.length * 2].decode(
+            "utf-16-le", errors="replace"
+        )
         result.append({"type": entity_type, "text": display, "url": url or display})
     return result or None
 

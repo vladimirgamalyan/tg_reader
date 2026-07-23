@@ -393,6 +393,20 @@ def test_message_to_dict_entity_offsets_are_utf16():
     ]
 
 
+def test_message_to_dict_entity_cutting_surrogate_pair_does_not_crash():
+    # A malformed entity whose offset cuts the emoji's UTF-16 surrogate
+    # pair in half must not crash the whole read; the broken half decodes
+    # as U+FFFD instead.
+    message = make_message(
+        message="🔗 link",
+        entities=[MessageEntityTextUrl(offset=1, length=2, url="https://x")],
+    )
+
+    assert message_to_dict(message)["entities"] == [
+        {"type": "text_url", "text": "� ", "url": "https://x"}
+    ]
+
+
 def test_message_to_dict_non_url_entities_are_skipped():
     message = make_message(
         message="bold text",
