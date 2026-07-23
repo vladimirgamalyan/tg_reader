@@ -62,9 +62,7 @@ def test_load_or_prompt_credentials_reports_stored_credentials(config_dir):
 def test_prompt_api_hash_rejects_empty(capsys, mocker):
     # An accidental Enter (or whitespace) would only fail later with an
     # obscure server-side error; the prompt must re-ask instead.
-    mocker.patch(
-        "tg_reader.auth.getpass.getpass", side_effect=["", "   ", " hash "]
-    )
+    mocker.patch("tg_reader.auth.getpass.getpass", side_effect=["", "   ", " hash "])
 
     assert _prompt_api_hash() == "hash"
 
