@@ -53,3 +53,4 @@ Before proposing or re-proposing a decision that feels debatable, check
   installed by the install prompt
 - [0005](0005-tombstone-deleted-messages.md) — Tombstone deleted messages
   instead of dropping them
+- [0006](0006-remove-message-cache.md) — Remove the local message cache

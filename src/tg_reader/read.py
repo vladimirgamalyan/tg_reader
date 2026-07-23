@@ -9,7 +9,7 @@ from telethon.tl.types import (
     PeerUser,
 )
 
-from . import cache, media
+from . import media
 from .errors import PermanentError
 from .session import telegram_session
 
@@ -86,9 +86,6 @@ def message_to_dict(message) -> dict:
         "topic_id": _topic_id(reply_to),
         "reply_to_msg_id": message.reply_to_msg_id,
         "is_service": getattr(message, "action", None) is not None,
-        # A message returned by the network exists by definition; the cache
-        # flips this to true only for a since-deleted message it still holds.
-        "deleted": False,
         "grouped_id": message.grouped_id,
         "media": media.media_info(message.media),
     }
@@ -139,39 +136,16 @@ def _topic_id(reply_to) -> int | None:
     )
 
 
-def cache_chat_id_candidates(chat_id: int) -> list[int]:
-    """Marked chat IDs a user-supplied ID may refer to, for cache lookup."""
-    return [utils.get_peer_id(peer) for peer in candidate_peers(chat_id)]
-
-
 async def fetch_messages(
     client: TelegramClient, chat_id: int, limit: int, offset_id: int
-) -> tuple[int, list[dict]]:
-    """Fetch recent messages from a chat, newest first, as plain dicts.
-
-    Returns the resolved marked chat ID (the cache key) and the messages.
-    """
+) -> list[dict]:
+    """Fetch recent messages from a chat, newest first, as plain dicts."""
     entity = await resolve_chat(client, chat_id)
     messages = await client.get_messages(entity, limit=limit, offset_id=offset_id)
-    return utils.get_peer_id(entity), [message_to_dict(m) for m in messages]
+    return [message_to_dict(m) for m in messages]
 
 
-async def run_read(
-    chat_id: int, limit: int, offset_id: int, use_cache: bool = True
-) -> list[dict]:
-    """Entry point for the 'read' command.
-
-    A paginated request whose window is fully covered by the local cache is
-    served without touching Telegram (no lock, no pacing, no session). Every
-    network fetch refreshes the cache, --no-cache runs included.
-    """
-    if use_cache:
-        cached = cache.lookup(cache_chat_id_candidates(chat_id), limit, offset_id)
-        if cached is not None:
-            return cached
+async def run_read(chat_id: int, limit: int, offset_id: int) -> list[dict]:
+    """Entry point for the 'read' command."""
     async with telegram_session() as client:
-        marked_chat_id, messages = await fetch_messages(
-            client, chat_id, limit, offset_id
-        )
-    cache.store(marked_chat_id, messages, limit, offset_id)
-    return messages
+        return await fetch_messages(client, chat_id, limit, offset_id)

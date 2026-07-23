@@ -99,10 +99,6 @@ output schema (JSON array on stdout, newest message first), each element:
                              when the message is not a reply
   is_service       bool      true for Telegram service/action messages
                              (joins, pins, title changes, topic events)
-  deleted          bool      true only for a cached message a later fetch
-                             found gone from Telegram (kept in the local
-                             archive and flagged); always false for messages
-                             fetched fresh from the network
   grouped_id       int|null  album ID, see 'albums' below; null for
                              standalone messages
   media            obj|null  downloadable attachment metadata; null when
@@ -126,21 +122,6 @@ albums (grouped media):
   id values. If the oldest messages in the output carry a grouped_id, the
   album may be cut off by --limit: paginate with --offset-id to fetch the
   rest of it.
-
-local cache:
-  Fetched messages are stored in a local SQLite database (Windows:
-  %APPDATA%\\tg-reader\\cache.db, Linux: ~/.config/tg-reader/cache.db).
-  An --offset-id request whose whole window is already covered by the
-  cache is answered from it without contacting Telegram; a request for
-  the newest messages (no --offset-id) always contacts Telegram. Cached
-  entries reflect the state at fetch time: a message edited in Telegram
-  later keeps its old text until the range is re-fetched. A message deleted
-  in Telegram is not dropped but flagged: 'deleted' turns true once a later
-  fetch proves its range complete, and the message stays in the cache (and
-  in this output) carrying that flag. Pass --no-cache to force a network
-  fetch (the result still refreshes the cache).
-  Other applications may read the database directly; the schema is
-  documented in the project docs.
 
 errors and exit codes:
   All errors are printed to stderr; stdout stays empty.
@@ -319,12 +300,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="fetch only messages older than this positive message ID (default: newest)",
     )
-    read_parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="do not answer from the local cache; fetch from Telegram "
-        "(the result still refreshes the cache)",
-    )
 
     download_parser = subparsers.add_parser(
         "download",
@@ -372,14 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "auth":
             asyncio.run(run_auth())
         elif args.command == "read":
-            messages = asyncio.run(
-                run_read(
-                    args.chat_id,
-                    args.limit,
-                    args.offset_id,
-                    use_cache=not args.no_cache,
-                )
-            )
+            messages = asyncio.run(run_read(args.chat_id, args.limit, args.offset_id))
             json.dump(messages, sys.stdout, ensure_ascii=False, indent=2)
             print()
         else:

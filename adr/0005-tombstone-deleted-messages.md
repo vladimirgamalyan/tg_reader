@@ -1,10 +1,11 @@
 # 0005. Tombstone deleted messages instead of dropping them
 
-Status: Accepted
+Status: Superseded by [0006](0006-remove-message-cache.md)
 
-Amends the deletion-handling aspect of
+Amended the deletion-handling aspect of
 [0002](0002-local-message-cache-in-sqlite.md) (Local message cache in SQLite);
-the rest of 0002 stands.
+both are superseded by [0006](0006-remove-message-cache.md), which removes the
+cache entirely.
 
 ## Context
 

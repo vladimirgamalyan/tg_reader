@@ -80,8 +80,6 @@ Directory contents:
 - `throttle.json` — flood protection state (last run timestamp, active
   FloodWait deadline); created and managed automatically
 - `tg_reader.lock` — inter-process lock file; created automatically
-- `cache.db` — local message cache (SQLite, see "Local message cache");
-  created and updated automatically by the `read` command
 
 Credentials are obtained at <https://my.telegram.org> → "API development tools".
 
@@ -115,7 +113,7 @@ for AI agents.
 ### tg-reader read
 
 ```
-tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
+tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
 ```
 
 - `CHAT_ID` — non-zero numeric chat/channel/user ID. Both raw MTProto IDs and
@@ -123,11 +121,7 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
 - `--limit N` — number of messages to fetch, 1..100 (default: 20). The cap
   keeps one run to a single GetHistory API request.
 - `--offset-id MSG_ID` — fetch messages older than this message ID (manual
-  pagination). A request whose whole window is already covered by the local
-  cache is answered from it without contacting Telegram (see "Local message
-  cache").
-- `--no-cache` — do not answer from the local cache; fetch from Telegram.
-  The fetched result still refreshes the cache.
+  pagination).
 - Output: a JSON array on stdout, newest message first. Each element:
 
   ```json
@@ -144,7 +138,6 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
     "topic_id": 777,
     "reply_to_msg_id": 12340,
     "is_service": false,
-    "deleted": false,
     "grouped_id": 13579246812345678,
     "media": {
       "type": "document",
@@ -156,8 +149,7 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
   ```
 
 - `edit_date` — ISO 8601 UTC time the message was last edited, or `null` when
-  it was never edited. A cached message from before this field existed also
-  reads `null` until its range is re-fetched.
+  it was never edited.
 - `entities` — hyperlinks found in `text`, in document order; `null` when the
   message has none. Telegram delivers links as message entities, and `text`
   keeps only their displayed text, so a link hidden behind a caption (e.g. the
@@ -178,10 +170,6 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--no-cache]
 - `is_service` — `true` for Telegram service/action messages (joins, pins,
   title changes, topic events), `false` for regular messages including
   media-only messages.
-- `deleted` — `true` only for a cached message that a later fetch found gone
-  from Telegram: it is kept in the local archive and flagged rather than
-  dropped (see "Local message cache"). Always `false` for messages fetched
-  fresh from the network, which exist by definition.
 - `grouped_id` — shared album ID. An album (several photos/files sent
   together) is several separate messages, each with its own `id` and its own
   `media`; the caption is carried by only one of them. Clients render such
@@ -300,66 +288,6 @@ resolve the chat automatically:
 3. If still not found, exit with a clear error — the account must actually be
    a member of the chat.
 
-## Local message cache
-
-Every successful `read` stores its messages in `cache.db` (SQLite, in the
-per-user config directory). The cache serves two purposes: repeated history
-reads are answered locally without spending Telegram requests, and other
-local applications can query the accumulated messages directly.
-
-Serving rules:
-
-- Only paginated requests (`--offset-id`) can be answered from the cache,
-  and only when the whole requested window lies inside one covered ID range;
-  otherwise the run goes to the network. A request for the newest messages
-  (no `--offset-id`) always goes to the network — only the server knows
-  whether new messages have arrived. A cache hit skips the whole networked
-  path, including the inter-process lock and pacing.
-- Cached data reflects the state at fetch time: a message edited in Telegram
-  later keeps its old form until the range is re-fetched. A message deleted
-  in Telegram is not dropped but flagged: within a range a fetch proves
-  complete, any message the cache still holds but the fetch did not return is
-  marked `deleted = true` and kept, so the archive stays complete and other
-  readers can tell the message is gone. A message that reappears in a later
-  complete fetch is un-flagged, so a transiently hidden message heals itself.
-  `--no-cache` forces a network fetch; the result still refreshes the cache
-  (including these deletion flags), so it also serves as the manual "refresh
-  this range" switch.
-- A positive `CHAT_ID` is ambiguous (user, channel or small group). The
-  cache resolves it only when exactly one of the candidate chats has cached
-  data; otherwise the run falls through to the normal network resolution.
-- A cache failure (corrupt file, unknown schema version, database locked by
-  another program) never fails the run: lookups fall back to the network and
-  a warning is printed to stderr. A `cache.db` with an unknown schema
-  version is left untouched — other applications may rely on its contents.
-  Known older tg-reader schemas may be migrated in place when the change is
-  compatible with preserving existing cached rows.
-
-Schema (`PRAGMA user_version = 5`):
-
-- `messages` — one row per message, primary key `(chat_id, id)`. Columns
-  `chat_id` (marked Bot-API-style chat ID), `id`, `date`, `edit_date`,
-  `sender_id`, `sender_name`, `text`, `topic_id`, `reply_to_msg_id`,
-  `is_service`, `grouped_id` carry the same values as the `read` JSON output
-  (`edit_date` is NULL when the message was never edited); `media` and
-  `entities` are the respective `read` output values serialized as JSON (NULL
-  when the message has none); `deleted` is a `0/1` flag set to `1` once a
-  later complete fetch found the message gone from Telegram; `fetched_at` is
-  the ISO 8601 UTC time the row was written. A re-fetched message replaces
-  its stored row.
-- `coverage` — per-chat inclusive `[min_id, max_id]` ranges within which the
-  cache holds every message that existed server-side at fetch time
-  (GetHistory returns consecutive messages, so one response proves a whole
-  range; overlapping and adjacent ranges are merged; `min_id = 1` means the
-  start of the visible history was reached). Reads are served only inside
-  one such range: stored messages outside any range may have unknown
-  neighbours, so they are never used to answer a read.
-
-Other applications may read the database at any time (SQLite supports
-concurrent readers) and should treat it as read-only. tg-reader writes with
-a 5 s busy timeout; a long write transaction held by another program makes
-tg-reader skip the cache for that run instead of failing it.
-
 ## Flood protection
 
 Reading history is a low-risk operation, but ignoring server-assigned
@@ -402,9 +330,7 @@ protection (FloodWait deadline persistence, pacing, lock behavior —
 path), filename sanitization (path traversal, Windows-forbidden characters,
 reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
-no-media and message-not-found errors), and the message cache (store/lookup
-roundtrip, serving rules, coverage merging, deletion tombstoning, chat ID
-disambiguation, schema migration, corrupt-file and foreign-schema fallback).
+no-media and message-not-found errors).
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
 Ubuntu and Windows for every push to `main` and every pull request. Since users
@@ -424,7 +350,6 @@ src/tg_reader/
     auth.py       # authorization logic
     session.py    # shared session scaffolding: lock, flood gate, connect, auth check
     read.py       # message reading logic
-    cache.py      # local message cache: SQLite storage, coverage tracking
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic
     throttle.py   # flood protection: lock, FloodWait state, pacing

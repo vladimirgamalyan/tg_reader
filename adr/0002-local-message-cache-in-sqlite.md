@@ -1,7 +1,8 @@
 # 0002. Local message cache in SQLite
 
-Status: Accepted (deletion handling amended by
-[0005](0005-tombstone-deleted-messages.md))
+Status: Superseded by [0006](0006-remove-message-cache.md)
+(deletion handling was amended by [0005](0005-tombstone-deleted-messages.md)
+while this was in force)
 
 ## Context
 
