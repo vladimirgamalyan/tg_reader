@@ -34,6 +34,27 @@ _LOCAL_FILE_ERRNOS = {
 }
 
 
+def _abort_when_over_limit(msg_id: int, max_size_bytes: int, max_size_mb: int):
+    """Progress callback that aborts the transfer once it exceeds the limit.
+
+    The pre-transfer check trusts the size Telegram declares; this guard
+    covers a declared size that turns out to be wrong, so a lying size
+    cannot cost unbounded traffic and disk — without it the .part file
+    would grow to the real size before the post-download check rejects it
+    (ADR-0010).
+    """
+
+    def check(received_bytes: int, _total) -> None:
+        if received_bytes > max_size_bytes:
+            raise DownloadError(
+                f"Download of message {msg_id} was aborted at "
+                f"{received_bytes / _MB:.1f} MB, which exceeds the "
+                f"{max_size_mb} MB limit; pass --max-size to raise it."
+            )
+
+    return check
+
+
 def _is_local_file_error(error: OSError) -> bool:
     """Tell a local filesystem failure apart from a network failure.
 
@@ -100,7 +121,13 @@ async def download_to_dir(
         ) from error
     try:
         try:
-            downloaded = await client.download_media(message, file=str(part))
+            downloaded = await client.download_media(
+                message,
+                file=str(part),
+                progress_callback=_abort_when_over_limit(
+                    msg_id, max_size_bytes, max_size_mb
+                ),
+            )
             if downloaded is None:
                 raise DownloadError(f"Telegram returned no file for message {msg_id}.")
             downloaded_size = part.stat().st_size

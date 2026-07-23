@@ -60,3 +60,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   filesystem errors during download as permanent
 - [0009](0009-cross-chat-reply-header.md) — Report cross-chat quote replies
   as "not a reply"
+- [0010](0010-enforce-max-size-during-transfer.md) — Enforce `--max-size`
+  during the transfer, not only around it

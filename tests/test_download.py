@@ -65,7 +65,7 @@ def make_client(message, payload=b"data"):
     )
     client.get_messages.return_value = message
 
-    async def fake_download(message, file):
+    async def fake_download(message, file, progress_callback=None):
         Path(file).write_bytes(payload)
         return file
 
@@ -157,6 +157,27 @@ async def test_download_refuses_oversized_actual_file(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+async def test_download_aborts_transfer_when_declared_size_lies(tmp_path):
+    # The declared size passes the pre-check but the actual stream is far
+    # larger: the transfer must be aborted mid-download via the progress
+    # callback, not billed in full and rejected only afterwards (ADR-0010).
+    client = make_client(make_media_message(size=1000))
+
+    async def endless_download(message, file, progress_callback=None):
+        with Path(file).open("wb") as stream:
+            for _ in range(100):  # 100 MB if never aborted
+                stream.write(b"x" * MB)
+                progress_callback(stream.tell(), None)
+        return file
+
+    client.download_media = AsyncMock(side_effect=endless_download)
+
+    with pytest.raises(DownloadError, match="aborted at"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=1)
+
+    assert list(tmp_path.iterdir()) == []
+
+
 async def test_download_no_file_returned_is_permanent_error(tmp_path):
     client = make_client(make_media_message())
     client.download_media = AsyncMock(return_value=None)
@@ -170,7 +191,7 @@ async def test_download_no_file_returned_is_permanent_error(tmp_path):
 async def test_download_failure_removes_part_file(tmp_path):
     client = make_client(make_media_message())
 
-    async def failing_download(message, file):
+    async def failing_download(message, file, progress_callback=None):
         Path(file).write_bytes(b"partial")
         raise RuntimeError("connection lost")
 
@@ -189,7 +210,7 @@ async def test_download_replaces_leftover_part_from_killed_run(tmp_path):
     # first for the fresh download to land on the real path.
     client = make_client(make_media_message())
 
-    async def refuse_to_overwrite(message, file):
+    async def refuse_to_overwrite(message, file, progress_callback=None):
         path = Path(file)
         if path.exists():  # Telethon's _get_proper_filename anti-overwrite rule
             path = path.with_name(f"{path.stem} (1){path.suffix}")

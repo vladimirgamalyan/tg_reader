@@ -237,7 +237,9 @@ the specific messages that are worth fetching.
   100). Protects an agent from accidentally pulling a multi-GB video; the
   error names the actual file size so the agent can retry with an explicit
   higher limit. Media with unknown size is refused for the same reason: the
-  limit cannot be checked before downloading.
+  limit cannot be checked before downloading. The limit is also enforced
+  during the transfer: a file that turns out larger than its declared size
+  is aborted mid-download instead of being fetched in full and rejected.
 - The message is re-fetched at download time: Telegram file references
   expire after a few hours, so downloading cannot rely on data captured by
   an earlier `read` run.
