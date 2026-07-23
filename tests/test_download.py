@@ -4,6 +4,7 @@ No network: the Telethon client is injected and replaced with AsyncMock,
 same pattern as tests/test_read.py.
 """
 
+import errno
 import json
 import time
 from datetime import datetime, timezone
@@ -209,6 +210,43 @@ async def test_download_replaces_leftover_part_from_killed_run(tmp_path):
     assert not stale.exists()
 
 
+async def test_download_disk_full_is_permanent_error(tmp_path):
+    # ENOSPC escapes Telethon's file write with no filename attached; it
+    # must still be classified as a local failure, not routed to the
+    # session layer's "cannot reach Telegram, retry later" mapping.
+    client = make_client(make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=OSError(errno.ENOSPC, "No space left on device")
+    )
+
+    with pytest.raises(DownloadError, match="Cannot write"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+
+async def test_download_locked_part_file_is_permanent_error(tmp_path):
+    # A file error carrying the offending path (e.g. an antivirus holding
+    # the .part open on Windows) is local and permanent.
+    client = make_client(make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=PermissionError(errno.EACCES, "Access is denied", "x.part")
+    )
+
+    with pytest.raises(DownloadError, match="Cannot write"):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+
+async def test_download_network_oserror_propagates(tmp_path):
+    # A socket-level OSError (no filename, non-filesystem errno) must keep
+    # propagating so the session layer maps it to the retry contract.
+    client = make_client(make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=ConnectionResetError(104, "Connection reset by peer")
+    )
+
+    with pytest.raises(ConnectionResetError):
+        await download_to_dir(client, -100123, 555, tmp_path, max_size_mb=100)
+
+
 async def test_download_unusable_output_dir_is_permanent_error(tmp_path):
     # An --output path that is not a usable directory (here: an existing file)
     # is a permanent local failure, not a transient network one.
@@ -264,6 +302,22 @@ async def test_run_download_unusable_output_is_permanent_not_retry(
 
     with pytest.raises(DownloadError):
         await run_download(-100123, 555, not_a_dir, max_size_mb=100)
+
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_download_disk_full_is_permanent_not_retry(
+    config_dir, tmp_path, mocker
+):
+    # Same classification through the whole session stack: a disk-full
+    # write failure must exit 1, not map to "retry later" (exit 2).
+    client = make_connected_client(mocker, make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=OSError(errno.ENOSPC, "No space left on device")
+    )
+
+    with pytest.raises(DownloadError):
+        await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)
 
     client.disconnect.assert_awaited_once()
 

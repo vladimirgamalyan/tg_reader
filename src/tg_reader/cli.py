@@ -191,7 +191,8 @@ errors and exit codes:
   0  success
   1  permanent error: bad arguments, unknown chat, message not found,
      message has no downloadable media, file size is unknown, file exceeds
-     --max-size (the error names the actual size), not authorized. Do not
+     --max-size (the error names the actual size), a local file problem
+     (unwritable --output directory, disk full), not authorized. Do not
      retry with the same arguments.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.

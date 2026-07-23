@@ -253,9 +253,13 @@ the specific messages that are worth fetching.
   `file` is the absolute path of the downloaded file.
 - Errors go to stderr with the same exit-code contract as `read`: `1` for
   permanent errors (unknown chat, message not found, message has no
-  downloadable media, file size is unknown, file exceeds the size cap), `2`
-  for "temporarily unavailable, retry after Ns" (lock held by another process,
-  active flood wait, network down).
+  downloadable media, file size is unknown, file exceeds the size cap, a
+  local file failure such as an unwritable output directory or a full
+  disk), `2` for "temporarily unavailable, retry after Ns" (lock held by
+  another process, active flood wait, network down). Local filesystem
+  errors during the transfer are told apart from network errors by the
+  exception's file path and errno (`ENOSPC` and friends), so a full disk
+  is never misreported as "cannot reach Telegram".
 
 #### File naming
 

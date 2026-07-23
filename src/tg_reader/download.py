@@ -1,5 +1,6 @@
 """Media download logic: fetch one message and save its attachment."""
 
+import errno
 import os
 from pathlib import Path
 
@@ -19,6 +20,30 @@ _MB = 1024 * 1024
 
 class DownloadError(PermanentError):
     """Raised when the message cannot provide the requested file (permanent)."""
+
+
+# Errnos a local file write fails with; no socket operation raises these.
+# They identify a filesystem problem even when the OSError carries no
+# filename: Python attaches the path to open()/stat() errors but not to
+# write() errors, and disk-full strikes mid-write. EDQUOT is POSIX-only,
+# hence the getattr fallback.
+_LOCAL_FILE_ERRNOS = {
+    errno.ENOSPC,
+    errno.EFBIG,
+    getattr(errno, "EDQUOT", errno.ENOSPC),
+}
+
+
+def _is_local_file_error(error: OSError) -> bool:
+    """Tell a local filesystem failure apart from a network failure.
+
+    The session layer maps any OSError escaping the command to "cannot
+    reach Telegram, retry later" (exit code 2); a disk-full or
+    access-denied error must not take that route, or the caller would
+    retry a permanent local failure forever. Socket-level errors carry
+    neither a filename nor a filesystem errno.
+    """
+    return error.filename is not None or error.errno in _LOCAL_FILE_ERRNOS
 
 
 async def download_to_dir(
@@ -74,10 +99,21 @@ async def download_to_dir(
             f"Output directory {output_dir} is not usable ({error})."
         ) from error
     try:
-        downloaded = await client.download_media(message, file=str(part))
-        if downloaded is None:
-            raise DownloadError(f"Telegram returned no file for message {msg_id}.")
-        downloaded_size = part.stat().st_size
+        try:
+            downloaded = await client.download_media(message, file=str(part))
+            if downloaded is None:
+                raise DownloadError(f"Telegram returned no file for message {msg_id}.")
+            downloaded_size = part.stat().st_size
+        except OSError as error:
+            # Telethon surfaces local file-write failures (disk full, an
+            # antivirus locking the .part) and network failures alike as
+            # OSError; only network ones may propagate to the session
+            # layer's retry mapping.
+            if not _is_local_file_error(error):
+                raise
+            raise DownloadError(
+                f"Cannot write the download to {part} ({error})."
+            ) from error
         if downloaded_size > max_size_bytes:
             raise DownloadError(
                 f"Downloaded media of message {msg_id} is "
