@@ -140,6 +140,9 @@ errors and exit codes:
      Do not retry with the same arguments. If the tool is not authorized
      yet, the error says to run 'tg-reader auth' -- that command is
      interactive and must be run by a human, do not run it as an agent.
+     Also reported as 'stdout closed early, output truncated' when the
+     consumer of stdout stopped reading (e.g. piping into 'head'): the
+     JSON on stdout is incomplete and must not be parsed as-is.
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
      Causes: another tg-reader process is running, Telegram assigned a
@@ -202,7 +205,10 @@ errors and exit codes:
      --max-size (the error names the actual size; a file that turns out
      larger than declared is aborted mid-transfer), a local file problem
      (unwritable --output directory, disk full), not authorized. Do not
-     retry with the same arguments.
+     retry with the same arguments. Also reported as 'stdout closed
+     early, output truncated' when the consumer of stdout stopped
+     reading: the JSON on stdout is incomplete and must not be parsed
+     as-is (the downloaded file itself is intact).
   2  temporarily unavailable, the stderr message ends with
      'retry after Ns': wait that long, then retry the same command.
      Causes: another tg-reader run (downloads can take a while; a
@@ -367,11 +373,16 @@ def build_parser() -> argparse.ArgumentParser:
 def _exit_closed_stdout() -> int:
     """Exit path for a stdout consumer that closed the pipe early.
 
-    Piping into e.g. 'head' is not a tool failure, so no scary error
-    message — but the output was truncated, so the exit code stays
-    non-zero. Closing stdout keeps the interpreter's exit flush from
-    raising again.
+    Piping into e.g. 'head' is not a tool failure, but the output was
+    truncated, so the exit code stays non-zero — and the documented
+    contract says every failure explains itself on stderr, which is not
+    part of the closed pipe. Closing stdout keeps the interpreter's exit
+    flush from raising again.
     """
+    try:
+        print("error: stdout closed early, output truncated", file=sys.stderr)
+    except OSError:
+        pass
     try:
         sys.stdout.close()
     except OSError:
@@ -412,14 +423,20 @@ def main(argv: list[str] | None = None) -> int:
         # quietly with the conventional code instead of a traceback.
         print("interrupted", file=sys.stderr)
         return 130
-    except EOFError:
+    except EOFError as error:
         # The 'auth' prompts (api_id, phone number, code) read stdin; when
         # it is closed (Ctrl+Z / Ctrl+D, piped input running dry) the raw
-        # "EOFError:" message would not explain what happened.
-        print(
-            "error: stdin closed while waiting for interactive input",
-            file=sys.stderr,
-        )
+        # "EOFError:" message would not explain what happened. 'read' and
+        # 'download' never read stdin (an EOFError there is e.g. a stray
+        # asyncio.IncompleteReadError), so the stdin explanation would
+        # mislead: report the raw error instead.
+        if args.command == "auth":
+            print(
+                "error: stdin closed while waiting for interactive input",
+                file=sys.stderr,
+            )
+        else:
+            print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     except BrokenPipeError:
         return _exit_closed_stdout()

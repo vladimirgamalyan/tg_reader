@@ -114,7 +114,13 @@ def check_flood_deadline() -> None:
     # the system clock jumped backwards or the state file is damaged.
     # Cap and rewrite the deadline so a stale one cannot lock the tool
     # out for longer than the flood itself.
-    longest = min(state.get("flood_seconds", MAX_FLOOD_WAIT), MAX_FLOOD_WAIT)
+    longest = state.get("flood_seconds", MAX_FLOOD_WAIT)
+    if not 0 < longest <= MAX_FLOOD_WAIT:
+        # The tool never records a duration outside (0, MAX_FLOOD_WAIT];
+        # such a value is damage (e.g. a hand-edited file) and must fall
+        # back to the global cap — a negative value taken at face value
+        # would cancel an active deadline instead of bounding it.
+        longest = MAX_FLOOD_WAIT
     if remaining > longest:
         remaining = longest
         state["flood_until"] = time.time() + remaining

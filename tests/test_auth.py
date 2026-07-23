@@ -4,12 +4,18 @@ No network and no real input: the Telethon client and the lock are mocked.
 The interactive login flow itself is not tested (it is Telethon's code).
 """
 
+import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import AuthKeyDuplicatedError, FloodWaitError, ServerError
+from telethon.errors import (
+    ApiIdInvalidError,
+    AuthKeyDuplicatedError,
+    FloodWaitError,
+    ServerError,
+)
 from telethon.tl.types import User
 
 from tg_reader import config, throttle
@@ -211,6 +217,55 @@ async def test_run_auth_disconnect_failure_does_not_mask_error(config_dir, mocke
         await run_auth()
 
     lock.release.assert_called_once()
+
+
+async def test_run_auth_disconnect_eof_failure_does_not_mask_error(config_dir, mocker):
+    # asyncio.IncompleteReadError is an EOFError, not an OSError: the
+    # disconnect guard must swallow it too, or it would replace the
+    # in-flight error and be blamed on stdin by the CLI.
+    client = make_client(mocker)
+    client.connect.side_effect = ConnectionError("boom")
+    client.disconnect.side_effect = asyncio.IncompleteReadError(b"", 4)
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(RetryLaterError, match="cannot reach Telegram"):
+        await run_auth()
+
+    lock.release.assert_called_once()
+
+
+async def test_run_auth_rejected_stored_credentials_are_deleted(config_dir, mocker):
+    # Stored api_id/api_hash rejected by Telegram would fail the same way
+    # on every run while auth keeps loading them instead of re-prompting:
+    # a dead end unless the stored pair is removed.
+    client = make_client(mocker)
+    client.connect.side_effect = ApiIdInvalidError(request=None)
+
+    with pytest.raises(PermanentError, match="has been deleted"):
+        await run_auth()
+
+    assert config.load_config() is None
+    client.disconnect.assert_awaited_once()
+
+
+async def test_run_auth_rejected_prompted_credentials_explain_the_fix(
+    tmp_path, monkeypatch, mocker
+):
+    # Credentials mistyped at the prompt are never saved; the error must
+    # say to re-run auth and re-enter them, not mention any stored file.
+    monkeypatch.setattr(config, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "123")
+    mocker.patch("tg_reader.auth.getpass.getpass", return_value="hash")
+    client = make_client(mocker)
+    client.connect.side_effect = ApiIdInvalidError(request=None)
+    lock = MagicMock()
+    mocker.patch("tg_reader.auth.throttle.acquire_lock", return_value=lock)
+
+    with pytest.raises(PermanentError, match="re-enter"):
+        await run_auth()
+
+    assert config.load_config() is None
 
 
 async def test_run_auth_refuses_while_flood_wait_active(config_dir, mocker):

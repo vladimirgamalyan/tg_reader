@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telethon import utils
 from telethon.errors import (
+    ApiIdInvalidError,
     AuthKeyUnregisteredError,
     FloodWaitError,
     TimedOutError,
@@ -598,6 +599,33 @@ async def test_run_read_disconnect_failure_does_not_mask_retry_error(
 
     with pytest.raises(RetryLaterError):
         await run_read(-1001234567890, limit=1, offset_id=0)
+
+
+async def test_run_read_disconnect_eof_failure_does_not_mask_retry_error(
+    config_dir, mocker
+):
+    # The dying connection can also surface asyncio.IncompleteReadError
+    # (an EOFError, not an OSError) from the disconnect: without the
+    # guard it would replace the mapped RetryLaterError and the CLI would
+    # blame it on stdin with exit code 1.
+    client = make_connected_client(mocker)
+    client.get_messages.side_effect = FloodWaitError(request=None, capture=77)
+    client.disconnect.side_effect = asyncio.IncompleteReadError(b"", 4)
+
+    with pytest.raises(RetryLaterError):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+
+async def test_run_read_invalid_api_credentials_ask_for_auth(config_dir, mocker):
+    # Stored api_id/api_hash rejected by Telegram: permanent, and the fix
+    # (re-running auth) must be named instead of the raw RPC error.
+    client = make_connected_client(mocker)
+    client.connect.side_effect = ApiIdInvalidError(request=None)
+
+    with pytest.raises(NotAuthorizedError, match="tg-reader auth"):
+        await run_read(-1001234567890, limit=1, offset_id=0)
+
+    client.disconnect.assert_awaited_once()
 
 
 async def test_run_read_disconnect_failure_does_not_mask_result(config_dir, mocker):

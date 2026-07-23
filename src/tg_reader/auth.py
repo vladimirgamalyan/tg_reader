@@ -3,6 +3,7 @@
 import getpass
 
 from telethon import TelegramClient, utils
+from telethon.errors import ApiIdInvalidError
 
 from . import config, throttle
 from .errors import PermanentError
@@ -110,14 +111,33 @@ async def run_auth() -> None:
             # The client still holds the session file open here; it is
             # deleted after the disconnect below.
             invalid_session_error = error
+        except ApiIdInvalidError as error:
+            # Telegram rejects the api_id/api_hash pair permanently. Newly
+            # typed credentials were simply mistyped: re-running auth
+            # re-prompts for them (they are never saved before working).
+            # Stored credentials would fail the same way on every run, so
+            # auth would be a dead end: delete them, then the re-run
+            # prompts from scratch.
+            if credentials_were_prompted:
+                raise PermanentError(
+                    "Telegram rejected the API credentials (api_id/api_hash). "
+                    "Run 'tg-reader auth' again and re-enter them."
+                ) from error
+            config.config_path().unlink(missing_ok=True)
+            raise PermanentError(
+                "Telegram rejected the stored API credentials; the config "
+                f"file ({config.config_path()}) has been deleted. Run "
+                "'tg-reader auth' again to enter new ones."
+            ) from error
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error
         finally:
             # Same as in session.py: a failing disconnect must not replace
-            # the in-flight error with a bare OSError.
+            # the in-flight error with a bare OSError or EOFError
+            # (asyncio.IncompleteReadError).
             try:
                 await client.disconnect()
-            except OSError:
+            except (OSError, EOFError):
                 pass
         if invalid_session_error is not None:
             # A dead session (revoked, AUTH_KEY_DUPLICATED) fails the same

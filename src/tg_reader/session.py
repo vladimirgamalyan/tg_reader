@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from telethon import TelegramClient
 from telethon.errors import (
+    ApiIdInvalidError,
     AuthKeyDuplicatedError,
     FloodPremiumWaitError,
     FloodWaitError,
@@ -106,16 +107,27 @@ async def telegram_session():
                 f"({type(error).__name__}). "
                 "Run 'tg-reader auth' again (interactive)."
             ) from error
+        except ApiIdInvalidError as error:
+            # The stored api_id/api_hash pair is rejected by Telegram: a
+            # permanent condition the raw RPC error would not explain how
+            # to fix. 'tg-reader auth' detects the same rejection and
+            # resets the stored credentials.
+            raise NotAuthorizedError(
+                "Telegram rejected the stored API credentials "
+                "(api_id/api_hash). Run 'tg-reader auth' (interactive) "
+                "to enter new ones."
+            ) from error
         except TRANSIENT_TELEGRAM_ERRORS as error:
             raise retry_later_from_transient_error(error) from error
         finally:
             # A failing disconnect (likely the same dying network that broke
             # the command) must not replace the in-flight error: a bare
-            # OSError escaping here would turn an already-mapped
-            # RetryLaterError into a permanent CLI failure.
+            # OSError — or an asyncio.IncompleteReadError, which is an
+            # EOFError, not an OSError — escaping here would turn an
+            # already-mapped RetryLaterError into a permanent CLI failure.
             try:
                 await client.disconnect()
-            except OSError:
+            except (OSError, EOFError):
                 pass
     finally:
         lock.release()

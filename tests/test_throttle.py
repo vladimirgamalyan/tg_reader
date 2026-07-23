@@ -84,6 +84,18 @@ def test_check_flood_deadline_capped_by_recorded_flood_duration(config_dir):
     assert read_state(config_dir)["flood_until"] <= time.time() + 60
 
 
+def test_check_flood_deadline_negative_duration_does_not_disable_gate(config_dir):
+    # The tool never records a non-positive flood duration; such a value
+    # is damage (e.g. a hand-edited file) and must not cancel an active
+    # deadline by capping the remaining wait below zero.
+    write_state(config_dir, flood_until=time.time() + 100, flood_seconds=-5)
+
+    with pytest.raises(RetryLaterError) as excinfo:
+        throttle.check_flood_deadline()
+
+    assert 0 < excinfo.value.retry_after <= 100
+
+
 def test_check_flood_deadline_expired(config_dir):
     write_state(config_dir, flood_until=time.time() - 1)
 

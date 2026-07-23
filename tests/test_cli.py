@@ -164,11 +164,28 @@ def test_eof_during_interactive_prompt_exits_1_with_clear_message(mocker, capsys
     assert "stdin closed" in captured.err
 
 
-def test_broken_pipe_on_stdout_exits_quietly(mocker, monkeypatch, capsys):
+def test_eof_outside_auth_is_not_blamed_on_stdin(mocker, capsys):
+    # 'read' and 'download' never read stdin: an EOFError there (e.g. a
+    # stray asyncio.IncompleteReadError) must be reported as itself, not
+    # with the misleading interactive-input explanation.
+    mocker.patch("tg_reader.cli.run_read", new=MagicMock())
+    mocker.patch("tg_reader.cli.asyncio.run", side_effect=EOFError)
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "EOFError" in captured.err
+    assert "stdin" not in captured.err
+
+
+def test_broken_pipe_on_stdout_reports_truncation(mocker, monkeypatch, capsys):
     # A consumer that stops reading early (e.g. piping into head) is not a
-    # tool failure: no error message, but a non-zero code because the
-    # output was truncated. stdout is closed so the interpreter's exit
-    # flush cannot raise again.
+    # tool failure, but the output was truncated: a non-zero code, and a
+    # short note on stderr so the exit code explains itself (the contract
+    # says every failure is reported there). stdout is closed so the
+    # interpreter's exit flush cannot raise again.
     mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
     stdout = MagicMock()
     stdout.write.side_effect = BrokenPipeError
@@ -177,13 +194,13 @@ def test_broken_pipe_on_stdout_exits_quietly(mocker, monkeypatch, capsys):
     exit_code = cli.main(["read", "-100123"])
 
     assert exit_code == 1
-    assert capsys.readouterr().err == ""
+    assert "output truncated" in capsys.readouterr().err
     stdout.close.assert_called_once()
 
 
-def test_closed_pipe_einval_on_windows_exits_quietly(mocker, monkeypatch, capsys):
+def test_closed_pipe_einval_on_windows_reports_truncation(mocker, monkeypatch, capsys):
     # The Windows C runtime reports a write to a closed pipe as
-    # OSError(EINVAL) instead of BrokenPipeError; the same quiet-exit
+    # OSError(EINVAL) instead of BrokenPipeError; the same truncation
     # treatment applies.
     mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
     monkeypatch.setattr(cli.os, "name", "nt")
@@ -194,7 +211,7 @@ def test_closed_pipe_einval_on_windows_exits_quietly(mocker, monkeypatch, capsys
     exit_code = cli.main(["read", "-100123"])
 
     assert exit_code == 1
-    assert capsys.readouterr().err == ""
+    assert "output truncated" in capsys.readouterr().err
     stdout.close.assert_called_once()
 
 
