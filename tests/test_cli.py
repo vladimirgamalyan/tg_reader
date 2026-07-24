@@ -198,6 +198,24 @@ def test_broken_pipe_on_stdout_reports_truncation(mocker, monkeypatch, capsys):
     stdout.close.assert_called_once()
 
 
+def test_buffered_output_broken_pipe_surfaces_on_flush(mocker, monkeypatch, capsys):
+    # A small JSON payload stays in the stdout buffer, so the individual
+    # writes succeed; the closed pipe only surfaces when the buffer is
+    # flushed. main() must flush inside its own try (not leave it to the
+    # interpreter's shutdown flush, which would escape as exit code 120),
+    # so this too is reported as truncation with exit 1.
+    mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+    stdout = MagicMock()
+    stdout.flush.side_effect = BrokenPipeError
+    monkeypatch.setattr(cli.sys, "stdout", stdout)
+
+    exit_code = cli.main(["read", "-100123"])
+
+    assert exit_code == 1
+    assert "output truncated" in capsys.readouterr().err
+    stdout.close.assert_called_once()
+
+
 def test_closed_pipe_einval_on_windows_reports_truncation(mocker, monkeypatch, capsys):
     # The Windows C runtime reports a write to a closed pipe as
     # OSError(EINVAL) instead of BrokenPipeError; the same truncation

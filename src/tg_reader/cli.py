@@ -412,6 +412,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
             print()
+        # Force the buffered output out to the pipe now, while a consumer
+        # that already closed it still surfaces as BrokenPipeError (or
+        # EINVAL on Windows) here, where the handlers below map it to the
+        # documented "output truncated" (exit 1). A small JSON payload stays
+        # buffered otherwise, and that first write to the closed pipe would
+        # happen in the interpreter's shutdown flush — after main() returned
+        # 0 — escaping as an "Exception ignored" note and a 120 exit code.
+        sys.stdout.flush()
     except RetryLaterError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
