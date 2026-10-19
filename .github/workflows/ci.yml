@@ -37,6 +37,7 @@ jobs:
           uvx --python ${{ matrix.python }} --from . tg-reader --help
           uvx --python ${{ matrix.python }} --from . tg-reader chats --help
           uvx --python ${{ matrix.python }} --from . tg-reader read --help
+          uvx --python ${{ matrix.python }} --from . tg-reader topics --help
           uvx --python ${{ matrix.python }} --from . tg-reader download --help
           uvx --python ${{ matrix.python }} --from . tg-reader sync --help
       - name: Unauthorized read exits with code 1

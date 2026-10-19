@@ -14,13 +14,16 @@ from tg_reader import config
 from tg_reader.chats import dialog_to_dict, list_chats, run_chats
 
 
-def make_dialog(dialog_id, name, is_user=False, is_group=False, entity=None):
+def make_dialog(
+    dialog_id, name, is_user=False, is_group=False, entity=None, unread_count=0
+):
     return SimpleNamespace(
         id=dialog_id,
         name=name,
         is_user=is_user,
         is_group=is_group,
         entity=entity if entity is not None else SimpleNamespace(),
+        unread_count=unread_count,
     )
 
 
@@ -42,6 +45,7 @@ def test_dialog_to_dict_user():
         "title": "John Doe",
         "type": "user",
         "username": "jdoe",
+        "unread_count": 0,
     }
 
 
@@ -54,6 +58,7 @@ def test_dialog_to_dict_small_group_has_no_username():
         "title": "Family",
         "type": "group",
         "username": None,
+        "unread_count": 0,
     }
 
 
@@ -81,6 +86,19 @@ async def test_list_chats_keeps_order_and_skips_migrated_groups():
 
     assert [chat["id"] for chat in result] == [2, 1]
     client.iter_dialogs.assert_called_once_with(ignore_migrated=True)
+
+
+async def test_list_chats_unread_keeps_only_chats_with_unread_messages():
+    dialogs = [
+        make_dialog(1, "Quiet", is_user=True),
+        make_dialog(2, "Busy", is_group=True, unread_count=7),
+    ]
+    client = AsyncMock()
+    client.iter_dialogs = MagicMock(return_value=dialogs_iter(dialogs))
+
+    result = await list_chats(client, None, unread=True)
+
+    assert [(chat["id"], chat["unread_count"]) for chat in result] == [(2, 7)]
 
 
 async def test_list_chats_query_matches_title_and_username_case_insensitively():

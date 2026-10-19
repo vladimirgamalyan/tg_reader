@@ -12,7 +12,7 @@ and is run manually by the user.
 
 ## Scope
 
-A single `tg-reader` command with five subcommands:
+A single `tg-reader` command with six subcommands:
 
 1. **`tg-reader auth`** — one-time interactive authorization; stores
    credentials and creates a Telethon session file.
@@ -22,7 +22,8 @@ A single `tg-reader` command with five subcommands:
    ID and prints them as JSON, including media metadata.
 4. **`tg-reader download`** — downloads the media attachment of one message
    to a local directory.
-5. **`tg-reader sync`** — keeps an incremental local archive of one chat
+5. **`tg-reader topics`** — lists the topics of a forum group with their IDs.
+6. **`tg-reader sync`** — keeps an incremental local archive of one chat
    (a JSONL file) for going through long conversations.
 
 Non-goals for now: sending messages, real-time monitoring.
@@ -117,7 +118,7 @@ for AI agents.
 ### tg-reader chats
 
 ```
-tg-reader chats [--query TEXT]
+tg-reader chats [--query TEXT] [--unread]
 ```
 
 Lists the account's chats (the dialog list, archived chats included) so an
@@ -127,13 +128,16 @@ agent can find the `CHAT_ID` of a chat known only by name.
   (case-insensitive substring). The full list of an account with a few
   hundred chats is tens of KB, more than an agent's tool output holds, so
   the help steers agents to query first.
+- `--unread` — keep only chats with unread messages: the "what's new in my
+  Telegram" entry point. Unread counts are the account's own (as in the
+  Telegram apps); tg-reader never marks anything as read.
 - Output: a JSON array in the order of the Telegram chat list (pinned
   first, then by latest activity):
 
   ```json
   [
-    {"id": -1001234567890, "title": "Board games", "type": "group", "username": "boardgames"},
-    {"id": 468932869, "title": "John Doe", "type": "user", "username": null}
+    {"id": -1001234567890, "title": "Board games", "type": "group", "username": "boardgames", "unread_count": 12},
+    {"id": 468932869, "title": "John Doe", "type": "user", "username": null, "unread_count": 0}
   ]
   ```
 
@@ -142,7 +146,8 @@ agent can find the `CHAT_ID` of a chat known only by name.
   - `title` — chat title or the user's display name, `null` if empty;
   - `type` — `user` (bots included), `group` (small group or supergroup)
     or `channel`;
-  - `username` — public username without `@`, or `null`.
+  - `username` — public username without `@`, or `null`;
+  - `unread_count` — number of unread messages.
 - Small groups upgraded to a supergroup are left out, as in the official
   apps: the dead group keeps its title and would otherwise be a wrong match.
 - Errors: same exit-code contract as `read`.
@@ -150,7 +155,7 @@ agent can find the `CHAT_ID` of a chat known only by name.
 ### tg-reader read
 
 ```
-tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
+tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--topic TOPIC_ID | --search TEXT]
 ```
 
 - `CHAT_ID` — non-zero numeric chat/channel/user ID. Both raw MTProto IDs and
@@ -159,6 +164,16 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   keeps one run to a single GetHistory API request.
 - `--offset-id MSG_ID` — fetch messages older than this message ID (manual
   pagination).
+- `--topic TOPIC_ID` — only the messages of one forum topic (GetReplies on
+  the topic root; the General topic is `1`). Topic IDs and titles come from
+  `tg-reader topics`.
+- `--search TEXT` — only the messages Telegram's server-side search finds
+  (messages.Search, the search box of the apps) over the whole chat
+  history: case-insensitive whole words, with word forms matched for some
+  languages (verified for Russian), but no partial words.
+- `--topic` and `--search` are mutually exclusive: Telethon would silently
+  drop the search when given both. Both page with `--limit`/`--offset-id`
+  like an unfiltered read. See ADR-0017.
 - Output: a JSON array on stdout, newest message first. Each element:
 
   ```json
@@ -176,6 +191,11 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
     "reply_to_msg_id": 12340,
     "is_service": false,
     "grouped_id": 13579246812345678,
+    "forwarded_from": {
+      "id": -1001780064822,
+      "name": "Some Channel",
+      "date": "2024-01-02T03:04:05+00:00"
+    },
     "media": {
       "type": "document",
       "filename": "report.pdf",
@@ -198,8 +218,8 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   code, ...) may add new `type` values later, so consumers must ignore
   `type` values they do not recognize.
 - `topic_id` — root message ID of the forum topic that contains the message;
-  `null` when the message is outside forum topics or Telegram did not expose
-  topic metadata. This is not the same as `reply_to_msg_id`: a message can
+  `null` when the message is outside forum topics, in the General topic, or
+  Telegram did not expose topic metadata. This is not the same as `reply_to_msg_id`: a message can
   reply to another message inside a topic while `topic_id` still points to the
   topic root.
 - `reply_to_msg_id` — ID of the message this one replies to; `null` when the
@@ -224,6 +244,12 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID]
   album can also be cut off by the `--limit` window: if the oldest returned
   messages carry a `grouped_id`, the rest of that album may lie beyond the
   window — paginate with `--offset-id` to fetch it.
+- `forwarded_from` — origin of a forwarded message, `null` otherwise
+  (ADR-0016): `id` (marked ID of the original author or channel, `null` when
+  the author hides their account from forwards), `name` (their name, from
+  the attached entity or the name Telegram passes for hidden accounts) and
+  `date` (time of the original message, which can be far older than the
+  forward's own `date`).
 - `media` — present when the message carries a downloadable file, `null`
   otherwise (plain text, polls, geo, contacts; link-preview images are not
   counted as message media). Fields:
@@ -327,6 +353,24 @@ they are never used verbatim:
   so an interrupted run never leaves a half-written file under the final
   name.
 
+### tg-reader topics
+
+```
+tg-reader topics CHAT_ID
+```
+
+Lists the topics of a forum group, so an agent can map a topic title to the
+`TOPIC_ID` for `read --topic`.
+
+- Output: a JSON array in the order of the Telegram topic list (pinned
+  first, then by latest activity), each element `{"id", "title",
+  "unread_count"}`. Deleted topics are skipped.
+- One GetForumTopics request: at most the 100 most recently active topics.
+  Paging through more was left out; forums seen so far have far fewer.
+- A chat that is not a forum fails with exit code 1 and "not a forum"
+  (Telegram answers CHANNEL_FORUM_MISSING for supergroups and channels,
+  PEER_ID_INVALID for private chats and small groups).
+
 ### tg-reader sync
 
 ```
@@ -419,7 +463,8 @@ policy constants live at the top of the module.
   the analogue is the size cap: `--max-size` defaults to 100 MB and refusal
   is checked against the metadata before any transfer starts. Media with
   unknown size is refused because the cap cannot be enforced safely.
-  `chats` costs one GetDialogs request per 100 chats. A `sync` is
+  `chats` costs one GetDialogs request per 100 chats; `topics` one
+  GetForumTopics request. A `sync` is
   unbounded too (one GetHistory request per 100 messages); its
   bound is the `--since` date, and its requests are spaced at least 2 s
   apart like separate runs.
@@ -444,7 +489,9 @@ reserved device names, missing/overlong names), and the download flow
 no-media and message-not-found errors), and the archive sync (first sync
 from `--since`, incremental append, resume after an interrupted fetch,
 local file errors reported as permanent), and the chat listing (types,
-`--query` filtering, migrated groups skipped).
+`--query` and `--unread` filtering, migrated groups skipped), forwarded
+message origins, the `read` topic/search filters, and the topic listing
+(deleted topics skipped, non-forum chats reported as permanent errors).
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
 Ubuntu and Windows for every push to `main` and every pull request. Since users
@@ -460,10 +507,11 @@ A package with src layout and a `tg-reader` entry point in `[project.scripts]`:
 ```
 src/tg_reader/
     __init__.py
-    cli.py        # argparse: auth/chats/read/download/sync subcommands, --help texts
+    cli.py        # argparse: auth/chats/read/topics/download/sync subcommands, --help texts
     auth.py       # authorization logic
     session.py    # shared session scaffolding: lock, flood gate, connect, auth check
     chats.py      # chat (dialog) listing
+    topics.py     # forum topic listing
     read.py       # message reading logic
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic

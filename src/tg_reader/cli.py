@@ -18,14 +18,15 @@ from .errors import PermanentError
 from .read import run_read
 from .sync import run_sync
 from .throttle import MAX_LIMIT, RetryLaterError
+from .topics import MAX_TOPICS, run_topics
 
 MAIN_DESCRIPTION = """\
 Read messages and download media from your own Telegram account (MTProto
 user account, not a bot).
 
 This tool is designed for use by AI agents:
-  - 'chats', 'read', 'download' and 'sync' print machine-readable JSON to
-    stdout and nothing else;
+  - every command except 'auth' prints machine-readable JSON to stdout
+    and nothing else;
   - errors go to stderr and the exit code is non-zero on failure:
     1 means a permanent error (do not retry with the same arguments),
     2 means temporarily unavailable (wait and retry; the stderr message
@@ -38,7 +39,9 @@ MAIN_EPILOG = """\
 examples:
   tg-reader auth                      one-time interactive authorization
   tg-reader chats                     list chats with their IDs
+  tg-reader chats --unread            chats with unread messages
   tg-reader read -1001234567890       last 20 messages from a channel
+  tg-reader topics -1001234567890     topics of a forum group
   tg-reader download -1001234567890 555 --output ./files
                                       save the media of message 555
   tg-reader sync -1001234567890 --since 2026-09-01
@@ -47,6 +50,7 @@ examples:
   tg-reader read --help               full 'read' reference (arguments,
                                       CHAT_ID formats, JSON output schema)
   tg-reader download --help           full 'download' reference
+  tg-reader topics --help             full 'topics' reference
   tg-reader sync --help               full 'sync' reference
 """
 
@@ -81,20 +85,27 @@ transliteration) before falling back to the full list.
 
 Titles are not unique and can change: when several chats plausibly match
 a name, do not pick one at random.
+
+To find out where new messages are, use --unread: it keeps only chats with
+unread messages. Unread counts are those of the account's Telegram apps;
+tg-reader itself never marks anything as read.
 """
 
 CHATS_EPILOG = """\
 output schema (JSON array on stdout, in the order of the Telegram chat
 list: pinned chats first, then by latest activity), each element:
-  id        int       chat ID in Bot-API-style marked form (-100... for
-                      channels and supergroups, -... for small groups,
-                      positive for users); pass it as CHAT_ID to 'read',
-                      'download' and 'sync'
-  title     str|null  chat title, or the user's display name; null if
-                      empty (e.g. a deleted account)
-  type      str       'user' (private chat, bots included), 'group'
-                      (small group or supergroup) or 'channel'
-  username  str|null  public @username without the '@'; null if none
+  id            int       chat ID in Bot-API-style marked form (-100...
+                          for channels and supergroups, -... for small
+                          groups, positive for users); pass it as
+                          CHAT_ID to the other commands
+  title         str|null  chat title, or the user's display name; null
+                          if empty (e.g. a deleted account)
+  type          str       'user' (private chat, bots included), 'group'
+                          (small group or supergroup) or 'channel'
+  username      str|null  public @username without the '@'; null if none
+  unread_count  int       number of unread messages; to read them, pass
+                          it to 'tg-reader read --limit' (at most 100 per
+                          run, paginate with --offset-id for more)
 
 Small groups that were upgraded to a supergroup are left out, as in the
 official apps: only the supergroup is listed.
@@ -115,6 +126,7 @@ flood protection (automatic, no configuration):
 
 examples:
   tg-reader chats --query samui      chats with 'samui' in the title or username
+  tg-reader chats --unread           chats with unread messages
   tg-reader chats                    the whole chat list
 """
 
@@ -134,6 +146,17 @@ found, the command fails with an error on stderr. Chats and users this
 account has already encountered (for example the sender of a message in a
 group read earlier) resolve without an open dialog; reading such a peer
 can succeed and return an empty array instead of failing.
+
+Two optional filters narrow the messages; they cannot be combined:
+  --topic TOPIC_ID  only the messages of one topic of a forum group;
+                    'tg-reader topics CHAT_ID' lists the topics with their
+                    IDs and titles
+  --search TEXT     only the messages Telegram's own search finds, over the
+                    whole chat history (the search box of the Telegram
+                    apps): case-insensitive whole words, with word forms
+                    matched for some languages (e.g. Russian), but no
+                    partial words ('clau' does not find 'Claude')
+Both work with --limit and --offset-id like an unfiltered read.
 """
 
 READ_EPILOG = """\
@@ -160,7 +183,8 @@ output schema (JSON array on stdout, newest message first), each element:
                            behind 'text', for 'url' equal to 'text'. Use this
                            to recover link targets that 'text' alone drops
   topic_id         int|null  forum topic root message ID; null outside
-                             forum topics or when Telegram does not expose it
+                             forum topics, in the General topic, or when
+                             Telegram does not expose it
   reply_to_msg_id  int|null  ID of the message this one replies to; null
                              when the message is not a reply. Plain posts
                              inside a forum topic are not replies, even
@@ -171,6 +195,14 @@ output schema (JSON array on stdout, newest message first), each element:
                              (joins, pins, title changes, topic events)
   grouped_id       int|null  album ID, see 'albums' below; null for
                              standalone messages
+  forwarded_from   obj|null  origin of a forwarded message; null when the
+                             message was not forwarded. Fields:
+    id           int|null  marked ID of the original author or channel;
+                           null when the author hides their account
+    name         str|null  name of the original author or channel; null
+                           if Telegram does not expose it
+    date         str|null  ISO 8601 UTC time of the original message; it
+                           can be much older than 'date' (the forward time)
   media            obj|null  downloadable attachment metadata; null when
                              the message has none (plain text, polls, geo,
                              contacts; link previews do not count). Fields:
@@ -196,10 +228,11 @@ albums (grouped media):
 errors and exit codes:
   All errors are printed to stderr; stdout stays empty.
   0  success
-  1  permanent error: bad arguments, unknown chat, not authorized.
-     Do not retry with the same arguments. If the tool is not authorized
-     yet, the error says to run 'tg-reader auth' -- that command is
-     interactive and must be run by a human, do not run it as an agent.
+  1  permanent error: bad arguments, unknown chat, an invalid --topic ID
+     (TOPIC_ID_INVALID), not authorized. Do not retry with the same
+     arguments. If the tool is not authorized yet, the error says to run
+     'tg-reader auth' -- that command is interactive and must be run by
+     a human, do not run it as an agent.
      Also reported as 'stdout closed early, output truncated' when the
      consumer of stdout stopped reading (e.g. piping into 'head'): the
      JSON on stdout is incomplete and must not be parsed as-is.
@@ -218,6 +251,46 @@ examples:
   tg-reader read -1001234567890                    last 20 channel messages
   tg-reader read 123456789 --limit 50              last 50 messages of a user chat
   tg-reader read -1001234567890 --offset-id 5000   messages older than message 5000
+  tg-reader read -1001234567890 --topic 42         last 20 messages of topic 42
+  tg-reader read -1001234567890 --search rent      last 20 messages about 'rent'
+"""
+
+TOPICS_DESCRIPTION = """\
+List the topics of a forum group (a supergroup with topics) and print them
+as a JSON array to stdout. Use it to find the TOPIC_ID for
+'tg-reader read --topic' when a topic is known only by its title.
+
+CHAT_ID is a non-zero numeric chat/channel/user ID, same accepted forms as
+in 'tg-reader read' (see its --help).
+"""
+
+TOPICS_EPILOG = f"""\
+output schema (JSON array on stdout, in the order of the Telegram topic
+list: pinned topics first, then by latest activity; at most the
+{MAX_TOPICS} most recently active topics), each element:
+  id            int  topic ID; pass it to 'tg-reader read --topic'. The
+                     General topic has ID 1
+  title         str  topic title
+  unread_count  int  number of unread messages in the topic
+
+errors and exit codes:
+  All errors are printed to stderr; stdout stays empty.
+  0  success
+  1  permanent error: bad arguments, unknown chat, the chat is not a forum
+     (it has no topics: read it without --topic), not authorized. Do not
+     retry with the same arguments. Also reported as 'stdout closed
+     early, output truncated' when the consumer of stdout stopped
+     reading: the JSON on stdout is incomplete.
+  2  temporarily unavailable, the stderr message ends with
+     'retry after Ns': wait that long, then retry the same command.
+     Causes: another tg-reader process is running, Telegram assigned a
+     flood wait (rate limiting), or the network is down.
+
+flood protection (automatic, no configuration):
+  Same as 'read'.
+
+examples:
+  tg-reader topics -1001234567890
 """
 
 DOWNLOAD_DESCRIPTION = """\
@@ -450,6 +523,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TEXT",
         help="only chats whose title or username contains TEXT (case-insensitive)",
     )
+    chats_parser.add_argument(
+        "--unread",
+        action="store_true",
+        help="only chats with unread messages",
+    )
 
     read_parser = subparsers.add_parser(
         "read",
@@ -478,6 +556,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="fetch only messages older than this message ID; "
         "0 starts from the newest (default: %(default)s)",
+    )
+    read_filter = read_parser.add_mutually_exclusive_group()
+    read_filter.add_argument(
+        "--topic",
+        metavar="TOPIC_ID",
+        type=positive_int_type,
+        help="only messages of this forum topic (IDs from 'tg-reader topics')",
+    )
+    read_filter.add_argument(
+        "--search",
+        metavar="TEXT",
+        help="only messages found by Telegram's search for TEXT",
+    )
+
+    topics_parser = subparsers.add_parser(
+        "topics",
+        help="list the topics of a forum group, JSON output",
+        description=TOPICS_DESCRIPTION,
+        epilog=TOPICS_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    topics_parser.add_argument(
+        "chat_id",
+        metavar="CHAT_ID",
+        type=chat_id_type,
+        help="non-zero numeric chat ID of a forum group, same forms as in 'read'",
     )
 
     download_parser = subparsers.add_parser(
@@ -567,12 +671,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "auth":
             asyncio.run(run_auth())
         elif args.command == "chats":
-            chats = asyncio.run(run_chats(args.query))
+            chats = asyncio.run(run_chats(args.query, args.unread))
             json.dump(chats, sys.stdout, ensure_ascii=False, indent=2)
             print()
         elif args.command == "read":
-            messages = asyncio.run(run_read(args.chat_id, args.limit, args.offset_id))
+            messages = asyncio.run(
+                run_read(
+                    args.chat_id, args.limit, args.offset_id, args.topic, args.search
+                )
+            )
             json.dump(messages, sys.stdout, ensure_ascii=False, indent=2)
+            print()
+        elif args.command == "topics":
+            topics = asyncio.run(run_topics(args.chat_id))
+            json.dump(topics, sys.stdout, ensure_ascii=False, indent=2)
             print()
         elif args.command == "sync":
             result = asyncio.run(run_sync(args.chat_id, args.since))
@@ -608,8 +720,8 @@ def main(argv: list[str] | None = None) -> int:
     except EOFError as error:
         # The 'auth' prompts (api_id, phone number, code) read stdin; when
         # it is closed (Ctrl+Z / Ctrl+D, piped input running dry) the raw
-        # "EOFError:" message would not explain what happened. 'chats', 'read',
-        # 'download' and 'sync' never read stdin (an EOFError there is e.g. a stray
+        # "EOFError:" message would not explain what happened. The other
+        # commands never read stdin (an EOFError there is e.g. a stray
         # asyncio.IncompleteReadError), so the stdin explanation would
         # mislead: report the raw error instead.
         if args.command == "auth":

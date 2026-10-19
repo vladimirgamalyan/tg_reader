@@ -23,6 +23,8 @@ from telethon.errors import (
 )
 from telethon.sessions import MemorySession
 from telethon.tl.types import (
+    Channel,
+    ChatPhotoEmpty,
     Document,
     DocumentAttributeFilename,
     InputPeerChannel,
@@ -73,6 +75,7 @@ def make_message(**overrides):
         "reply_to_msg_id": None,
         "action": None,
         "grouped_id": None,
+        "forward": None,
         "media": None,
     }
     defaults.update(overrides)
@@ -214,6 +217,7 @@ def test_message_to_dict_all_fields():
         "reply_to_msg_id": None,
         "is_service": False,
         "grouped_id": None,
+        "forwarded_from": None,
         "media": None,
     }
 
@@ -234,6 +238,7 @@ def test_message_to_dict_nulls():
         "reply_to_msg_id": None,
         "is_service": False,
         "grouped_id": None,
+        "forwarded_from": None,
         "media": None,
     }
 
@@ -453,6 +458,50 @@ def test_message_to_dict_no_entities_is_null():
     assert message_to_dict(make_message())["entities"] is None
 
 
+def make_forward(**overrides):
+    defaults = {
+        "from_id": None,
+        "from_name": None,
+        "sender": None,
+        "chat": None,
+        "date": datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_message_to_dict_forward_from_channel():
+    channel = Channel(id=1780064822, title="News", photo=ChatPhotoEmpty(), date=None)
+    forward = make_forward(from_id=PeerChannel(1780064822), chat=channel)
+
+    assert message_to_dict(make_message(forward=forward))["forwarded_from"] == {
+        "id": -1001780064822,
+        "name": "News",
+        "date": "2024-01-02T03:04:05+00:00",
+    }
+
+
+def test_message_to_dict_forward_from_user():
+    user = User(id=555, first_name="Jane")
+    forward = make_forward(from_id=PeerUser(555), sender=user)
+
+    result = message_to_dict(make_message(forward=forward))["forwarded_from"]
+
+    assert result["id"] == 555
+    assert result["name"] == "Jane"
+
+
+def test_message_to_dict_forward_from_hidden_account():
+    # An author who hides their account from forwards leaves only a name.
+    forward = make_forward(from_name="Hidden Author")
+
+    assert message_to_dict(make_message(forward=forward))["forwarded_from"] == {
+        "id": None,
+        "name": "Hidden Author",
+        "date": "2024-01-02T03:04:05+00:00",
+    }
+
+
 # --- fetching ---
 
 
@@ -465,7 +514,22 @@ async def test_fetch_messages_returns_dicts_newest_first():
     result = await fetch_messages(client, -1001234567890, limit=2, offset_id=0)
 
     assert [message["id"] for message in result] == [2, 1]
-    client.get_messages.assert_awaited_once_with(entity, limit=2, offset_id=0)
+    client.get_messages.assert_awaited_once_with(
+        entity, limit=2, offset_id=0, reply_to=None, search=None
+    )
+
+
+async def test_fetch_messages_passes_topic_and_search_filters():
+    client = AsyncMock()
+    entity = InputPeerChannel(1234567890, access_hash=0)
+    client.session.get_input_entity = MagicMock(return_value=entity)
+    client.get_messages.return_value = []
+
+    await fetch_messages(client, -1001234567890, 20, 0, topic_id=42)
+    await fetch_messages(client, -1001234567890, 20, 0, search="rent")
+
+    assert client.get_messages.await_args_list[0].kwargs["reply_to"] == 42
+    assert client.get_messages.await_args_list[1].kwargs["search"] == "rent"
 
 
 # --- run_read: flood protection wiring ---

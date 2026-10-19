@@ -28,14 +28,20 @@ uv tool install git+https://github.com/vladimirgamalyan/tg_reader.git
 If AI agents will use the tool, also install the [agent skill](#agent-skill)
 so they can discover it in future sessions.
 
+To update, run `uv tool upgrade tg-reader` and copy the skill folder again:
+installed skill copies do not update on their own.
+
 ## Commands
 
 - `tg-reader auth` — one-time interactive authorization, run manually by the
   user (stores credentials and the session file)
-- `tg-reader chats [--query TEXT]` — list the account's chats with their IDs,
-  to find a chat known only by name
+- `tg-reader chats [--query TEXT] [--unread]` — list the account's chats with
+  their IDs and unread counts, to find a chat known only by name or see
+  where new messages are
 - `tg-reader read CHAT_ID` — read recent messages from a chat by its numeric
-  ID, JSON output; `--help` contains everything an agent needs
+  ID, JSON output; `--topic` narrows to one forum topic, `--search` to
+  Telegram's search results; `--help` contains everything an agent needs
+- `tg-reader topics CHAT_ID` — list the topics of a forum group with their IDs
 - `tg-reader download CHAT_ID MSG_ID --output DIR` — download the media
   attachment of one message (message IDs and media metadata come from `read`)
 - `tg-reader sync CHAT_ID [--since YYYY-MM-DD]` — keep an incremental local
@@ -45,8 +51,10 @@ so they can discover it in future sessions.
 
 [skills/tg-reader/](skills/tg-reader/) is an agent skill that makes AI agents
 aware of this CLI in future sessions: when to reach for it, how to resolve a
-chat name to its numeric ID via a local alias registry, and to consult
-`--help` for the exact CLI contract instead of relying on memory. The install
+chat name to its numeric ID (a local alias registry, falling back to
+`tg-reader chats`), which command fits a request (what's new, a forum topic,
+a search, a long conversation), and to consult `--help` for the exact CLI
+contract instead of relying on memory. The install
 prompt above installs it; to install manually, copy the folder to
 `~/.claude/skills/tg-reader/` (Claude Code) or `~/.codex/skills/tg-reader/`
 (Codex).

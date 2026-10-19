@@ -75,7 +75,7 @@ def test_read_accepts_zero_offset_id(mocker):
     exit_code = cli.main(["read", "-100123", "--offset-id", "0"])
 
     assert exit_code == 0
-    run_read.assert_awaited_once_with(-100123, 20, 0)
+    run_read.assert_awaited_once_with(-100123, 20, 0, None, None)
 
 
 def test_read_passes_arguments_to_run_read(mocker, capsys):
@@ -84,7 +84,7 @@ def test_read_passes_arguments_to_run_read(mocker, capsys):
     exit_code = cli.main(["read", "-100123"])
 
     assert exit_code == 0
-    run_read.assert_awaited_once_with(-100123, 20, 0)
+    run_read.assert_awaited_once_with(-100123, 20, 0, None, None)
 
 
 def test_download_rejects_zero_chat_id():
@@ -147,7 +147,49 @@ def test_chats_success_prints_json(mocker, capsys):
 
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out) == chats
-    run_chats.assert_awaited_once_with("samui")
+    run_chats.assert_awaited_once_with("samui", False)
+
+
+def test_chats_unread_flag_is_passed(mocker):
+    run_chats = mocker.patch("tg_reader.cli.run_chats", new=AsyncMock(return_value=[]))
+
+    exit_code = cli.main(["chats", "--unread"])
+
+    assert exit_code == 0
+    run_chats.assert_awaited_once_with(None, True)
+
+
+def test_read_passes_topic_and_search(mocker):
+    run_read = mocker.patch("tg_reader.cli.run_read", new=AsyncMock(return_value=[]))
+
+    cli.main(["read", "-100123", "--topic", "42"])
+    cli.main(["read", "-100123", "--search", "rent"])
+
+    assert run_read.await_args_list[0].args == (-100123, 20, 0, 42, None)
+    assert run_read.await_args_list[1].args == (-100123, 20, 0, None, "rent")
+
+
+def test_read_rejects_topic_combined_with_search():
+    # Telethon would silently drop the search when given both.
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(
+            ["read", "-100123", "--topic", "42", "--search", "rent"]
+        )
+
+    assert excinfo.value.code == 1
+
+
+def test_topics_success_prints_json(mocker, capsys):
+    topics = [{"id": 1, "title": "General", "unread_count": 0}]
+    run_topics = mocker.patch(
+        "tg_reader.cli.run_topics", new=AsyncMock(return_value=topics)
+    )
+
+    exit_code = cli.main(["topics", "-100123"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == topics
+    run_topics.assert_awaited_once_with(-100123)
 
 
 def test_sync_success_prints_json(mocker, capsys):

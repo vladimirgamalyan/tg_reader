@@ -105,7 +105,27 @@ def message_to_dict(message) -> dict:
         "reply_to_msg_id": _reply_to_msg_id(message, reply_to),
         "is_service": getattr(message, "action", None) is not None,
         "grouped_id": message.grouped_id,
+        "forwarded_from": _forwarded_from(message),
         "media": media.media_info(message.media),
+    }
+
+
+def _forwarded_from(message) -> dict | None:
+    """Describe where a forwarded message originally came from.
+
+    from_id is absent when the original author hides their account from
+    forwards; Telegram then only passes their name (from_name). The name of
+    a visible origin comes from the entity Telethon attached to the header.
+    """
+    forward = getattr(message, "forward", None)
+    if forward is None:
+        return None
+    return {
+        "id": utils.get_peer_id(forward.from_id) if forward.from_id else None,
+        "name": utils.get_display_name(forward.sender or forward.chat)
+        or forward.from_name
+        or None,
+        "date": forward.date.isoformat() if forward.date else None,
     }
 
 
@@ -194,15 +214,33 @@ def _reply_to_msg_id(message, reply_to) -> int | None:
 
 
 async def fetch_messages(
-    client: TelegramClient, chat_id: int, limit: int, offset_id: int
+    client: TelegramClient,
+    chat_id: int,
+    limit: int,
+    offset_id: int,
+    topic_id: int | None = None,
+    search: str | None = None,
 ) -> list[dict]:
-    """Fetch recent messages from a chat, newest first, as plain dicts."""
+    """Fetch recent messages from a chat, newest first, as plain dicts.
+
+    topic_id narrows the fetch to one forum topic (GetReplies on the topic
+    root), search to Telegram's server-side search (Search); the CLI never
+    passes both, because Telethon would silently drop the search.
+    """
     entity = await resolve_chat(client, chat_id)
-    messages = await client.get_messages(entity, limit=limit, offset_id=offset_id)
+    messages = await client.get_messages(
+        entity, limit=limit, offset_id=offset_id, reply_to=topic_id, search=search
+    )
     return [message_to_dict(m) for m in messages]
 
 
-async def run_read(chat_id: int, limit: int, offset_id: int) -> list[dict]:
+async def run_read(
+    chat_id: int,
+    limit: int,
+    offset_id: int,
+    topic_id: int | None = None,
+    search: str | None = None,
+) -> list[dict]:
     """Entry point for the 'read' command."""
     async with telegram_session() as client:
-        return await fetch_messages(client, chat_id, limit, offset_id)
+        return await fetch_messages(client, chat_id, limit, offset_id, topic_id, search)

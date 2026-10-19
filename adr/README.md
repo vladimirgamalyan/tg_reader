@@ -70,3 +70,7 @@ Before proposing or re-proposing a decision that feels debatable, check
   archive via a `sync` command
 - [0015](0015-agent-resolves-chat-names-via-chats-listing.md) — The agent
   resolves chat names, helped by a `chats` listing
+- [0016](0016-forwarded-from-field.md) — Expose a forwarded message's origin
+  as one `forwarded_from` object
+- [0017](0017-topic-and-search-as-read-filters.md) — Forum topics and search
+  as `read` filters, plus a `topics` listing

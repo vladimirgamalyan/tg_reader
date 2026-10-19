@@ -19,15 +19,19 @@ def dialog_to_dict(dialog) -> dict:
         "type": chat_type,
         # Small group chats have no username attribute at all.
         "username": getattr(dialog.entity, "username", None),
+        "unread_count": dialog.unread_count,
     }
 
 
-async def list_chats(client: TelegramClient, query: str | None) -> list[dict]:
+async def list_chats(
+    client: TelegramClient, query: str | None, unread: bool = False
+) -> list[dict]:
     """List dialogs (archived included), in Telegram's dialog order.
 
     With a query, only chats whose title or username contains it
     (case-insensitively) are kept: the full list of an account with a few
-    hundred chats is tens of KB, too much for an agent's tool output.
+    hundred chats is tens of KB, too much for an agent's tool output. With
+    unread, only chats with unread messages are kept.
 
     Small groups that were upgraded to supergroups are skipped, as the
     official apps do: the dead group keeps its title, and picking it by
@@ -37,6 +41,8 @@ async def list_chats(client: TelegramClient, query: str | None) -> list[dict]:
         dialog_to_dict(dialog)
         async for dialog in client.iter_dialogs(ignore_migrated=True)
     ]
+    if unread:
+        chats = [chat for chat in chats if chat["unread_count"] > 0]
     if query is None:
         return chats
     needle = query.casefold()
@@ -48,7 +54,7 @@ async def list_chats(client: TelegramClient, query: str | None) -> list[dict]:
     ]
 
 
-async def run_chats(query: str | None) -> list[dict]:
+async def run_chats(query: str | None, unread: bool = False) -> list[dict]:
     """Entry point for the 'chats' command."""
     async with telegram_session() as client:
-        return await list_chats(client, query)
+        return await list_chats(client, query, unread)

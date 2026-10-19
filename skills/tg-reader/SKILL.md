@@ -44,7 +44,7 @@ Read it and match the user's wording against each chat's `title` and `aliases`.
 ## 2. Read messages
 
 ```
-tg-reader read <CHAT_ID> [--limit N] [--offset-id MSG_ID]
+tg-reader read <CHAT_ID> [--limit N] [--offset-id MSG_ID] [--topic TOPIC_ID | --search TEXT]
 ```
 
 - `<CHAT_ID>` is the resolved numeric ID from the registry.
@@ -54,7 +54,23 @@ tg-reader read <CHAT_ID> [--limit N] [--offset-id MSG_ID]
   self-sufficient. Do not rely on memory for the schema; check `--help`.
 
 Present the result to the user readably (sender, time, text) — do not dump raw
-JSON unless they ask for it.
+JSON unless they ask for it. For a forwarded message (`forwarded_from` is set),
+say where it came from, and mind that its original date may be much older.
+
+Pick the right kind of read for the request:
+
+- **"What's new" across Telegram** (no chat named): run
+  `tg-reader chats --unread`, then read the chats that matter with
+  `--limit` set to their `unread_count` (at most 100 per run). Summarize per
+  chat; skip noisy channels unless the user cares about them.
+- **A topic of a forum group** ("the rent topic in …"): run
+  `tg-reader topics <CHAT_ID>`, match the user's wording against the topic
+  titles (same rules as chat names: ask when several fit), then
+  `tg-reader read <CHAT_ID> --topic <TOPIC_ID>`.
+- **Finding something said earlier** ("when did X mention Y"): use
+  `--search <word>`. It is Telegram's own search: whole words, case-insensitive,
+  word forms for Russian, no partial words — search by a full word, and try
+  synonyms if nothing comes back.
 
 ## 3. Long conversations: the local archive
 
