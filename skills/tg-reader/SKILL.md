@@ -25,7 +25,7 @@ Read it and match the user's wording against each chat's `title` and `aliases`.
   user which one before reading.
 - If nothing matches, ask the user for the numeric chat ID — never guess or
   invent an ID, because a wrong ID reads a different person's chat. Offer to
-  save it (see section 4).
+  save it (see section 5).
 
 ## 2. Read messages
 
@@ -42,7 +42,33 @@ tg-reader read <CHAT_ID> [--limit N] [--offset-id MSG_ID]
 Present the result to the user readably (sender, time, text) — do not dump raw
 JSON unless they ask for it.
 
-## 3. Download media
+## 3. Long conversations: the local archive
+
+When the user wants to go through a long stretch of a chat (more than a few
+hundred messages), or to come back to a conversation read earlier, keep a
+local archive instead of paging with `--offset-id`:
+
+```
+tg-reader sync <CHAT_ID>                      # update an existing archive
+tg-reader sync <CHAT_ID> --since YYYY-MM-DD   # first sync of this chat
+```
+
+- Run it without `--since` first. If the chat has no archive yet, it fails
+  and asks for `--since`: take the date from the user's request, or ask the
+  user how far back to go. Pick the latest date that covers what is needed —
+  an early date on a busy chat means many requests.
+- The output names the archive file: JSONL, one message per line, oldest
+  first, same fields as the `read` output. Search and read that file
+  directly (Grep, jq) rather than loading all of it at once.
+- `--since` is ignored once an archive exists. If the user needs history
+  from before the archive's first message, delete the file and sync again
+  with the earlier date.
+- The archive is never refreshed: edits and deletions made after a message
+  was archived do not show up. Mention this if it matters for the answer.
+
+See `tg-reader sync --help` for the full contract.
+
+## 4. Download media
 
 If a message carries media (its `media` field is not null) and the user wants
 the file:
@@ -53,7 +79,7 @@ tg-reader download <CHAT_ID> <MSG_ID> --output <DIR>
 
 See `tg-reader download --help` for size limits and album handling.
 
-## 4. Add a chat to the registry
+## 5. Add a chat to the registry
 
 When the user asks to remember a chat (e.g. "remember this chat as 'work', id
 -100123"), append an entry to `aliases.json`, keeping it valid JSON:

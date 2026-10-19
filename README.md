@@ -36,6 +36,8 @@ so they can discover it in future sessions.
   ID, JSON output; `--help` contains everything an agent needs
 - `tg-reader download CHAT_ID MSG_ID --output DIR` — download the media
   attachment of one message (message IDs and media metadata come from `read`)
+- `tg-reader sync CHAT_ID [--since YYYY-MM-DD]` — keep an incremental local
+  archive of one chat (a JSONL file) for going through long conversations
 
 ## Agent skill
 

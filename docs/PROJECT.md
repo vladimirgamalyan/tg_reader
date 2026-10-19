@@ -12,7 +12,7 @@ and is run manually by the user.
 
 ## Scope
 
-A single `tg-reader` command with three subcommands:
+A single `tg-reader` command with four subcommands:
 
 1. **`tg-reader auth`** — one-time interactive authorization; stores
    credentials and creates a Telethon session file.
@@ -20,9 +20,10 @@ A single `tg-reader` command with three subcommands:
    ID and prints them as JSON, including media metadata.
 3. **`tg-reader download`** — downloads the media attachment of one message
    to a local directory.
+4. **`tg-reader sync`** — keeps an incremental local archive of one chat
+   (a JSONL file) for going through long conversations.
 
-Non-goals for now: sending messages, full history export, real-time
-monitoring.
+Non-goals for now: sending messages, real-time monitoring.
 
 There is deliberately no chat-discovery command in the first versions: the
 numeric `CHAT_ID` must be obtained out of band (e.g. from a Telegram client).
@@ -80,6 +81,8 @@ Directory contents:
 - `throttle.json` — flood protection state (last run timestamp, active
   FloodWait deadline); created and managed automatically
 - `tg_reader.lock` — inter-process lock file; created automatically
+- `archive/` — per-chat message archives (`<chat id>.jsonl`); created by
+  `tg-reader sync`
 
 Credentials are obtained at <https://my.telegram.org> → "API development tools".
 
@@ -290,11 +293,58 @@ they are never used verbatim:
   so an interrupted run never leaves a half-written file under the final
   name.
 
+### tg-reader sync
+
+```
+tg-reader sync CHAT_ID [--since YYYY-MM-DD]
+```
+
+Brings the local archive of one chat up to date. Intended for going through
+a long conversation, or coming back to one days later: the agent searches
+the archive file (grep, jq) instead of paging the history through `read`.
+Design rationale: ADR-0014.
+
+- `CHAT_ID` — same formats as `read`. The archive is
+  `<config dir>/archive/<marked chat id>.jsonl`, named by the resolved chat,
+  so the raw and the `-100...` form of one chat share an archive.
+- File format: one message per line, oldest first, each line a JSON object
+  in the `read` output format (UTF-8, non-ASCII unescaped so it can be
+  grepped).
+- `--since` — start date (UTC) of a new archive. Required for the first sync
+  of a chat; ignored once the archive exists, so retrying an interrupted
+  first sync with the same command continues it. Starting from an earlier
+  date means deleting the file first.
+- Every later sync fetches only messages newer than the last archived one
+  (ascending, `min_id`), so the file is always a gap-free range of history
+  and its last line alone says where to continue.
+- The file is rewritten through a temporary file and renamed, so a crash
+  never leaves a half-written line. A fetch interrupted by a flood wait or a
+  network failure still saves what it got; the next sync resumes from there.
+- Staleness: archived messages are never refreshed; edits and deletions made
+  after archiving do not show up. To rebuild, delete the file and sync again
+  with `--since`.
+- Output: a single JSON object on stdout:
+
+  ```json
+  {
+    "file": "C:\\Users\\me\\AppData\\Roaming\\tg-reader\\archive\\-1001234567890.jsonl",
+    "added": 37,
+    "total": 2950
+  }
+  ```
+
+  `file` is not created until at least one message is archived.
+- Errors go to stderr with the same exit-code contract as `read`: `1` for
+  permanent errors (unknown chat, `--since` missing for a chat without an
+  archive, an unreadable, unwritable or damaged archive file), `2` for
+  "temporarily unavailable, retry after Ns". Local file errors are reported
+  as permanent, never as "cannot reach Telegram".
+
 ### access_hash resolution
 
 Telethon needs an `access_hash` to address channels and users; known entities
-are cached in the session file. `tg-reader read` and `tg-reader download`
-resolve the chat automatically:
+are cached in the session file. `tg-reader read`, `tg-reader download` and
+`tg-reader sync` resolve the chat automatically:
 
 1. Try the session entity cache first.
 2. If the ID is unknown, iterate the account's dialogs until the chat is found
@@ -334,11 +384,15 @@ policy constants live at the top of the module.
   count (a file is fetched in ~512 KB chunks, one GetFile request each), so
   the analogue is the size cap: `--max-size` defaults to 100 MB and refusal
   is checked against the metadata before any transfer starts. Media with
-  unknown size is refused because the cap cannot be enforced safely.
-- **Downloads hold the lock** — a large download keeps the global lock for
-  its whole duration; a concurrent `tg-reader` run waits for the lock up to
-  30 s, then fails with exit code 2. This is intentional: one process talking
-  to Telegram at a time is the whole point of the lock.
+  unknown size is refused because the cap cannot be enforced safely. A
+  `sync` is unbounded too (one GetHistory request per 100 messages); its
+  bound is the `--since` date, and its requests are spaced at least 2 s
+  apart like separate runs.
+- **Downloads and syncs hold the lock** — a large download or a long sync
+  keeps the global lock for its whole duration; a concurrent `tg-reader`
+  run waits for the lock up to 30 s, then fails with exit code 2. This is
+  intentional: one process talking to Telegram at a time is the whole point
+  of the lock.
 
 ## Testing
 
@@ -352,7 +406,9 @@ protection (FloodWait deadline persistence, pacing, lock behavior —
 path), filename sanitization (path traversal, Windows-forbidden characters,
 reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
-no-media and message-not-found errors).
+no-media and message-not-found errors), and the archive sync (first sync
+from `--since`, incremental append, resume after an interrupted fetch,
+local file errors reported as permanent).
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
 Ubuntu and Windows for every push to `main` and every pull request. Since users
@@ -368,12 +424,13 @@ A package with src layout and a `tg-reader` entry point in `[project.scripts]`:
 ```
 src/tg_reader/
     __init__.py
-    cli.py        # argparse: auth/read/download subcommands, --help texts
+    cli.py        # argparse: auth/read/download/sync subcommands, --help texts
     auth.py       # authorization logic
     session.py    # shared session scaffolding: lock, flood gate, connect, auth check
     read.py       # message reading logic
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic
+    sync.py       # local chat archive (JSONL) sync logic
     throttle.py   # flood protection: lock, FloodWait state, pacing
     errors.py     # PermanentError: base class for exit-code-1 failures
     config.py     # user directory, config.json load/save

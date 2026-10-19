@@ -3,6 +3,7 @@
 import errno
 import json
 import re
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -134,6 +135,35 @@ def test_download_error_exits_1(mocker, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no media" in captured.err
+
+
+def test_sync_success_prints_json(mocker, capsys):
+    summary = {"file": "x.jsonl", "added": 2, "total": 2}
+    run_sync = mocker.patch(
+        "tg_reader.cli.run_sync", new=AsyncMock(return_value=summary)
+    )
+
+    exit_code = cli.main(["sync", "-100123", "--since", "2026-09-01"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == summary
+    run_sync.assert_awaited_once_with(-100123, date(2026, 9, 1))
+
+
+def test_sync_since_is_optional(mocker):
+    run_sync = mocker.patch("tg_reader.cli.run_sync", new=AsyncMock(return_value={}))
+
+    exit_code = cli.main(["sync", "-100123"])
+
+    assert exit_code == 0
+    run_sync.assert_awaited_once_with(-100123, None)
+
+
+def test_sync_rejects_malformed_since():
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["sync", "-100123", "--since", "01.09.2026"])
+
+    assert excinfo.value.code == 1
 
 
 def test_keyboard_interrupt_exits_130(mocker, capsys):

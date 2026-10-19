@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from datetime import date
 from importlib.metadata import version as package_version
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from .auth import run_auth
 from .download import DEFAULT_MAX_SIZE_MB, run_download
 from .errors import PermanentError
 from .read import run_read
+from .sync import run_sync
 from .throttle import MAX_LIMIT, RetryLaterError
 
 MAIN_DESCRIPTION = """\
@@ -21,8 +23,8 @@ Read messages and download media from your own Telegram account (MTProto
 user account, not a bot).
 
 This tool is designed for use by AI agents:
-  - 'read' and 'download' print machine-readable JSON to stdout and
-    nothing else;
+  - 'read', 'download' and 'sync' print machine-readable JSON to stdout
+    and nothing else;
   - errors go to stderr and the exit code is non-zero on failure:
     1 means a permanent error (do not retry with the same arguments),
     2 means temporarily unavailable (wait and retry; the stderr message
@@ -37,9 +39,12 @@ examples:
   tg-reader read -1001234567890       last 20 messages from a channel
   tg-reader download -1001234567890 555 --output ./files
                                       save the media of message 555
+  tg-reader sync -1001234567890 --since 2026-09-01
+                                      archive a long conversation locally
   tg-reader read --help               full 'read' reference (arguments,
                                       CHAT_ID formats, JSON output schema)
   tg-reader download --help           full 'download' reference
+  tg-reader sync --help               full 'sync' reference
 """
 
 AUTH_DESCRIPTION = """\
@@ -225,6 +230,69 @@ examples:
   tg-reader download -1001234567890 555 --output ./files --max-size 500
 """
 
+SYNC_DESCRIPTION = """\
+Bring the local archive of one chat up to date, then print a JSON summary
+to stdout. Use it to go through a long conversation, or to come back to one
+days later, instead of paging through it with 'tg-reader read'.
+
+The archive is a JSONL file in the per-user config directory (Windows:
+%APPDATA%\\tg-reader\\archive, Linux: ~/.config/tg-reader/archive), one per
+chat: one message per line, oldest first, each line a JSON object with the
+same fields as an element of the 'tg-reader read' output. Read or search
+that file directly; its path is printed in the output.
+
+The first sync of a chat needs --since and fetches every message sent from
+that date (UTC) on. Every later sync fetches only the messages newer than
+the last archived one, so coming back to a conversation costs a request or
+two instead of re-reading it. --since only starts a new archive: for an
+existing one it is ignored, and the archive keeps its original start date.
+The archive has no gaps: an interrupted sync keeps what it fetched, and the
+next sync continues from there.
+
+CHAT_ID is a non-zero numeric chat/channel/user ID, same accepted forms as
+in 'tg-reader read' (see its --help).
+"""
+
+SYNC_EPILOG = """\
+output schema (single JSON object on stdout):
+  file    str  absolute path of the archive file; the file is not created
+               until at least one message is archived ('total' > 0)
+  added   int  number of messages appended by this run
+  total   int  number of messages in the archive after this run
+
+staleness:
+  Archived messages are never refreshed: edits and deletions made after a
+  message was archived do not show up in the file ('edit_date' reflects
+  the time of archiving). To rebuild an archive, or to start it from an
+  earlier date, delete the file and sync again with --since.
+
+errors and exit codes:
+  All errors are printed to stderr; stdout stays empty.
+  0  success
+  1  permanent error: bad arguments, unknown chat, --since missing for a
+     chat that has no archive yet, an unreadable, unwritable or damaged
+     archive file, not authorized. Do not retry with the same arguments.
+     Also reported as 'stdout closed early, output truncated' when the
+     consumer of stdout stopped reading: the JSON on stdout is incomplete
+     and must not be parsed as-is (the archive itself is intact).
+  2  temporarily unavailable, the stderr message ends with
+     'retry after Ns': wait that long, then retry the same command.
+     Causes: another tg-reader run (a long sync makes a concurrent run
+     wait up to 30s for the lock, then fail), a Telegram flood wait, or
+     the network is down. Messages fetched before the failure are already
+     archived; the retry continues after them.
+
+flood protection (automatic, no configuration):
+  Same as 'read', plus: a sync makes one Telegram request per 100
+  messages, spaced at least 2 seconds apart, and holds the lock for its
+  whole duration. An early --since on a busy chat means many requests:
+  pick the latest date that covers what is needed.
+
+examples:
+  tg-reader sync -1001234567890 --since 2026-09-01   start an archive
+  tg-reader sync -1001234567890                      fetch new messages
+"""
+
 
 class Parser(argparse.ArgumentParser):
     """ArgumentParser that exits with code 1 on usage errors.
@@ -283,6 +351,15 @@ def limit_type(value: str) -> int:
 
 def max_size_type(value: str) -> int:
     return positive_int_type(value)
+
+
+def date_type(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "must be a date in YYYY-MM-DD format"
+        ) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -367,6 +444,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_SIZE_MB,
         help="refuse to download files larger than this many MB (default: %(default)s)",
     )
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="update the local archive of a chat, JSON output",
+        description=SYNC_DESCRIPTION,
+        epilog=SYNC_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sync_parser.add_argument(
+        "chat_id",
+        metavar="CHAT_ID",
+        type=chat_id_type,
+        help="non-zero numeric chat/channel/user ID, same forms as in 'read'",
+    )
+    sync_parser.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        type=date_type,
+        help="start date (UTC) of a new archive; required for the first sync "
+        "of a chat, ignored once the archive exists",
+    )
     return parser
 
 
@@ -404,6 +502,10 @@ def main(argv: list[str] | None = None) -> int:
             messages = asyncio.run(run_read(args.chat_id, args.limit, args.offset_id))
             json.dump(messages, sys.stdout, ensure_ascii=False, indent=2)
             print()
+        elif args.command == "sync":
+            result = asyncio.run(run_sync(args.chat_id, args.since))
+            json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+            print()
         else:
             result = asyncio.run(
                 run_download(
@@ -434,8 +536,8 @@ def main(argv: list[str] | None = None) -> int:
     except EOFError as error:
         # The 'auth' prompts (api_id, phone number, code) read stdin; when
         # it is closed (Ctrl+Z / Ctrl+D, piped input running dry) the raw
-        # "EOFError:" message would not explain what happened. 'read' and
-        # 'download' never read stdin (an EOFError there is e.g. a stray
+        # "EOFError:" message would not explain what happened. 'read',
+        # 'download' and 'sync' never read stdin (an EOFError there is e.g. a stray
         # asyncio.IncompleteReadError), so the stdin explanation would
         # mislead: report the raw error instead.
         if args.command == "auth":
