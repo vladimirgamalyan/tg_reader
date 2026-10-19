@@ -66,6 +66,8 @@ Before proposing or re-proposing a decision that feels debatable, check
   builtin MIME table for generated extensions
 - [0012](0012-accept-cache-resolution-of-non-dialog-peers.md) — Accept
   session-cache resolution of non-dialog peers
+- [0013](0013-pin-photo-downloads-to-still-image.md) — Pin photo downloads to
+  the reported still image
 - [0014](0014-incremental-chat-archive-via-sync.md) — Incremental local chat
   archive via a `sync` command
 - [0015](0015-agent-resolves-chat-names-via-chats-listing.md) — The agent
