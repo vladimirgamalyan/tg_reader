@@ -12,23 +12,24 @@ and is run manually by the user.
 
 ## Scope
 
-A single `tg-reader` command with four subcommands:
+A single `tg-reader` command with five subcommands:
 
 1. **`tg-reader auth`** — one-time interactive authorization; stores
    credentials and creates a Telethon session file.
-2. **`tg-reader read`** — fetches recent messages from a chat by its numeric
+2. **`tg-reader chats`** — lists the account's chats with their IDs, so a
+   chat known by name can be found.
+3. **`tg-reader read`** — fetches recent messages from a chat by its numeric
    ID and prints them as JSON, including media metadata.
-3. **`tg-reader download`** — downloads the media attachment of one message
+4. **`tg-reader download`** — downloads the media attachment of one message
    to a local directory.
-4. **`tg-reader sync`** — keeps an incremental local archive of one chat
+5. **`tg-reader sync`** — keeps an incremental local archive of one chat
    (a JSONL file) for going through long conversations.
 
 Non-goals for now: sending messages, real-time monitoring.
 
-There is deliberately no chat-discovery command in the first versions: the
-numeric `CHAT_ID` must be obtained out of band (e.g. from a Telegram client).
-A `chats` subcommand listing the account's dialogs with their IDs is planned
-for a later version.
+The commands that act on a chat take its numeric `CHAT_ID` only, never a
+name: mapping a name to an ID is the agent's job, through the alias
+registry of the agent skill and `tg-reader chats` (ADR-0015).
 
 ## Stack
 
@@ -112,6 +113,39 @@ for AI agents.
 - The network part runs under the same inter-process lock, flood-wait gate
   and pacing as the other commands, so the session file is never opened by
   two processes at once and an active Telegram flood wait is respected.
+
+### tg-reader chats
+
+```
+tg-reader chats [--query TEXT]
+```
+
+Lists the account's chats (the dialog list, archived chats included) so an
+agent can find the `CHAT_ID` of a chat known only by name.
+
+- `--query TEXT` — keep only chats whose title or username contains `TEXT`
+  (case-insensitive substring). The full list of an account with a few
+  hundred chats is tens of KB, more than an agent's tool output holds, so
+  the help steers agents to query first.
+- Output: a JSON array in the order of the Telegram chat list (pinned
+  first, then by latest activity):
+
+  ```json
+  [
+    {"id": -1001234567890, "title": "Board games", "type": "group", "username": "boardgames"},
+    {"id": 468932869, "title": "John Doe", "type": "user", "username": null}
+  ]
+  ```
+
+  - `id` — marked ID (`-100...` channels and supergroups, `-...` small
+    groups, positive users), unambiguous for the other commands;
+  - `title` — chat title or the user's display name, `null` if empty;
+  - `type` — `user` (bots included), `group` (small group or supergroup)
+    or `channel`;
+  - `username` — public username without `@`, or `null`.
+- Small groups upgraded to a supergroup are left out, as in the official
+  apps: the dead group keeps its title and would otherwise be a wrong match.
+- Errors: same exit-code contract as `read`.
 
 ### tg-reader read
 
@@ -384,8 +418,9 @@ policy constants live at the top of the module.
   count (a file is fetched in ~512 KB chunks, one GetFile request each), so
   the analogue is the size cap: `--max-size` defaults to 100 MB and refusal
   is checked against the metadata before any transfer starts. Media with
-  unknown size is refused because the cap cannot be enforced safely. A
-  `sync` is unbounded too (one GetHistory request per 100 messages); its
+  unknown size is refused because the cap cannot be enforced safely.
+  `chats` costs one GetDialogs request per 100 chats. A `sync` is
+  unbounded too (one GetHistory request per 100 messages); its
   bound is the `--since` date, and its requests are spaced at least 2 s
   apart like separate runs.
 - **Downloads and syncs hold the lock** — a large download or a long sync
@@ -408,7 +443,8 @@ reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
 no-media and message-not-found errors), and the archive sync (first sync
 from `--since`, incremental append, resume after an interrupted fetch,
-local file errors reported as permanent).
+local file errors reported as permanent), and the chat listing (types,
+`--query` filtering, migrated groups skipped).
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff and the suite on
 Ubuntu and Windows for every push to `main` and every pull request. Since users
@@ -424,9 +460,10 @@ A package with src layout and a `tg-reader` entry point in `[project.scripts]`:
 ```
 src/tg_reader/
     __init__.py
-    cli.py        # argparse: auth/read/download/sync subcommands, --help texts
+    cli.py        # argparse: auth/chats/read/download/sync subcommands, --help texts
     auth.py       # authorization logic
     session.py    # shared session scaffolding: lock, flood gate, connect, auth check
+    chats.py      # chat (dialog) listing
     read.py       # message reading logic
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic

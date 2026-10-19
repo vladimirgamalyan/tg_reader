@@ -32,6 +32,8 @@ so they can discover it in future sessions.
 
 - `tg-reader auth` — one-time interactive authorization, run manually by the
   user (stores credentials and the session file)
+- `tg-reader chats [--query TEXT]` — list the account's chats with their IDs,
+  to find a chat known only by name
 - `tg-reader read CHAT_ID` — read recent messages from a chat by its numeric
   ID, JSON output; `--help` contains everything an agent needs
 - `tg-reader download CHAT_ID MSG_ID --output DIR` — download the media

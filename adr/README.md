@@ -68,3 +68,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   session-cache resolution of non-dialog peers
 - [0014](0014-incremental-chat-archive-via-sync.md) — Incremental local chat
   archive via a `sync` command
+- [0015](0015-agent-resolves-chat-names-via-chats-listing.md) — The agent
+  resolves chat names, helped by a `chats` listing

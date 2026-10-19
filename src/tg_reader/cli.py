@@ -12,6 +12,7 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 from .auth import run_auth
+from .chats import run_chats
 from .download import DEFAULT_MAX_SIZE_MB, run_download
 from .errors import PermanentError
 from .read import run_read
@@ -23,8 +24,8 @@ Read messages and download media from your own Telegram account (MTProto
 user account, not a bot).
 
 This tool is designed for use by AI agents:
-  - 'read', 'download' and 'sync' print machine-readable JSON to stdout
-    and nothing else;
+  - 'chats', 'read', 'download' and 'sync' print machine-readable JSON to
+    stdout and nothing else;
   - errors go to stderr and the exit code is non-zero on failure:
     1 means a permanent error (do not retry with the same arguments),
     2 means temporarily unavailable (wait and retry; the stderr message
@@ -36,11 +37,13 @@ This tool is designed for use by AI agents:
 MAIN_EPILOG = """\
 examples:
   tg-reader auth                      one-time interactive authorization
+  tg-reader chats                     list chats with their IDs
   tg-reader read -1001234567890       last 20 messages from a channel
   tg-reader download -1001234567890 555 --output ./files
                                       save the media of message 555
   tg-reader sync -1001234567890 --since 2026-09-01
                                       archive a long conversation locally
+  tg-reader chats --help              full 'chats' reference
   tg-reader read --help               full 'read' reference (arguments,
                                       CHAT_ID formats, JSON output schema)
   tg-reader download --help           full 'download' reference
@@ -64,6 +67,57 @@ Linux: ~/.config/tg-reader):
 If the session is already authorized, prints the account info and exits.
 """
 
+CHATS_DESCRIPTION = """\
+List the chats of this account (its dialog list, archived chats included)
+with their IDs, and print them as a JSON array to stdout. Use it to find
+the CHAT_ID of a chat known only by name, then pass 'id' to the other
+commands.
+
+Prefer --query with a distinctive part of the name: it keeps only chats
+whose title or username contains that text (case-insensitive substring).
+The full list of an account with a few hundred chats is tens of KB. If
+nothing matches, try another part or spelling of the name (e.g. a Latin
+transliteration) before falling back to the full list.
+
+Titles are not unique and can change: when several chats plausibly match
+a name, do not pick one at random.
+"""
+
+CHATS_EPILOG = """\
+output schema (JSON array on stdout, in the order of the Telegram chat
+list: pinned chats first, then by latest activity), each element:
+  id        int       chat ID in Bot-API-style marked form (-100... for
+                      channels and supergroups, -... for small groups,
+                      positive for users); pass it as CHAT_ID to 'read',
+                      'download' and 'sync'
+  title     str|null  chat title, or the user's display name; null if
+                      empty (e.g. a deleted account)
+  type      str       'user' (private chat, bots included), 'group'
+                      (small group or supergroup) or 'channel'
+  username  str|null  public @username without the '@'; null if none
+
+Small groups that were upgraded to a supergroup are left out, as in the
+official apps: only the supergroup is listed.
+
+errors and exit codes:
+  All errors are printed to stderr; stdout stays empty.
+  0  success
+  1  permanent error: not authorized. Do not retry. Also reported as
+     'stdout closed early, output truncated' when the consumer of stdout
+     stopped reading: the JSON on stdout is incomplete.
+  2  temporarily unavailable, the stderr message ends with
+     'retry after Ns': wait that long, then retry the same command.
+     Causes: another tg-reader process is running, Telegram assigned a
+     flood wait (rate limiting), or the network is down.
+
+flood protection (automatic, no configuration):
+  Same as 'read'. The listing costs one Telegram request per 100 chats.
+
+examples:
+  tg-reader chats --query samui      chats with 'samui' in the title or username
+  tg-reader chats                    the whole chat list
+"""
+
 READ_DESCRIPTION = """\
 Fetch recent messages from one chat and print them as a JSON array to stdout,
 newest message first.
@@ -72,6 +126,7 @@ CHAT_ID is a non-zero numeric chat/channel/user ID. Accepted forms:
   -100<id>   Bot-API-style marked ID of a channel or supergroup
   -<id>      Bot-API-style marked ID of a small group chat
   <id>       raw positive MTProto ID (user, channel or small group chat)
+'tg-reader chats' lists the account's chats with their IDs.
 
 The account must be a member of the chat (or have the dialog open). Unknown
 IDs are looked up in the account's dialog list; if the chat is still not
@@ -383,6 +438,19 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
+    chats_parser = subparsers.add_parser(
+        "chats",
+        help="list the account's chats with their IDs, JSON output",
+        description=CHATS_DESCRIPTION,
+        epilog=CHATS_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    chats_parser.add_argument(
+        "--query",
+        metavar="TEXT",
+        help="only chats whose title or username contains TEXT (case-insensitive)",
+    )
+
     read_parser = subparsers.add_parser(
         "read",
         help="read recent messages from a chat by numeric ID, JSON output",
@@ -498,6 +566,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "auth":
             asyncio.run(run_auth())
+        elif args.command == "chats":
+            chats = asyncio.run(run_chats(args.query))
+            json.dump(chats, sys.stdout, ensure_ascii=False, indent=2)
+            print()
         elif args.command == "read":
             messages = asyncio.run(run_read(args.chat_id, args.limit, args.offset_id))
             json.dump(messages, sys.stdout, ensure_ascii=False, indent=2)
@@ -536,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     except EOFError as error:
         # The 'auth' prompts (api_id, phone number, code) read stdin; when
         # it is closed (Ctrl+Z / Ctrl+D, piped input running dry) the raw
-        # "EOFError:" message would not explain what happened. 'read',
+        # "EOFError:" message would not explain what happened. 'chats', 'read',
         # 'download' and 'sync' never read stdin (an EOFError there is e.g. a stray
         # asyncio.IncompleteReadError), so the stdin explanation would
         # mislead: report the raw error instead.

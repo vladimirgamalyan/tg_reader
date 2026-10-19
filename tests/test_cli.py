@@ -137,6 +137,19 @@ def test_download_error_exits_1(mocker, capsys):
     assert "no media" in captured.err
 
 
+def test_chats_success_prints_json(mocker, capsys):
+    chats = [{"id": 1, "title": "A", "type": "user", "username": None}]
+    run_chats = mocker.patch(
+        "tg_reader.cli.run_chats", new=AsyncMock(return_value=chats)
+    )
+
+    exit_code = cli.main(["chats", "--query", "samui"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == chats
+    run_chats.assert_awaited_once_with("samui")
+
+
 def test_sync_success_prints_json(mocker, capsys):
     summary = {"file": "x.jsonl", "added": 2, "total": 2}
     run_sync = mocker.patch(

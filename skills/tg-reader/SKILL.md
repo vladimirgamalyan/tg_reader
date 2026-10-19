@@ -1,6 +1,6 @@
 ---
 name: tg-reader
-description: "Read messages from the user's own Telegram account through the tg-reader CLI. Use whenever the user wants to read, check, or fetch Telegram messages from a chat — for example phrases like read telegram, check my telegram, what's new in the ... chat, latest messages from ... (in any language the user speaks). Resolves a chat name to its numeric ID via a local alias registry, and can add new chats to that registry on request. Works from any project or folder."
+description: "Read messages from the user's own Telegram account through the tg-reader CLI. Use whenever the user wants to read, check, or fetch Telegram messages from a chat — for example phrases like read telegram, check my telegram, what's new in the ... chat, latest messages from ... (in any language the user speaks). Resolves a chat name to its numeric ID via a local alias registry or the account's chat list, and can add new chats to that registry on request. Works from any project or folder."
 ---
 
 # tg-reader
@@ -23,9 +23,23 @@ Read it and match the user's wording against each chat's `title` and `aliases`.
   include `work`), in whatever language the user and the registry use.
 - If several chats plausibly match (e.g. "John" vs "John (work)"), ask the
   user which one before reading.
-- If nothing matches, ask the user for the numeric chat ID — never guess or
-  invent an ID, because a wrong ID reads a different person's chat. Offer to
-  save it (see section 5).
+- If nothing matches, look the chat up in the account's chat list:
+
+  ```
+  tg-reader chats --query <part of the name>
+  ```
+
+  It matches a case-insensitive substring of the chat title or username, so
+  query a distinctive part of the name, and try other forms (a word stem,
+  the Latin spelling) if nothing comes back. Use the printed `id` as is.
+  - Exactly one chat clearly matches → use it, and name the chat in your
+    answer so the user sees which one was read.
+  - Several plausibly match → show them and ask the user which one.
+  - Nothing matches → ask the user. Never guess or invent an ID: a wrong ID
+    reads a different person's chat.
+
+  After resolving a chat this way, offer to save it to the registry
+  (see section 5) so the next request finds it directly.
 
 ## 2. Read messages
 
@@ -92,10 +106,12 @@ When the user asks to remember a chat (e.g. "remember this chat as 'work', id
 }
 ```
 
-- `id` — numeric chat ID exactly as the user gives it (`tg-reader` accepts both
-  raw MTProto IDs and Bot-API-style `-100...` IDs).
+- `id` — numeric chat ID exactly as the user gives it or as `tg-reader chats`
+  prints it (`tg-reader` accepts both raw MTProto IDs and Bot-API-style
+  `-100...` IDs).
 - `title` — human name to show when confirming ("reading 'John'?").
 - `aliases` — lowercase short names to match the user's wording against.
 - Optional `note` — free-text context (e.g. "channel", a short description).
 
-Only record what the user provides; do not fabricate an ID.
+Only record IDs the user provides or `tg-reader chats` printed; do not
+fabricate an ID.

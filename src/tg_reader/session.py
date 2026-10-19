@@ -2,8 +2,8 @@
 
 Wraps one networked run: config check, inter-process lock, flood-wait
 gate, pacing, connect, authorization check, and the mapping of transient
-failures (FloodWait, network) to RetryLaterError. 'read', 'download' and
-'sync' only supply the work done inside the session.
+failures (FloodWait, network) to RetryLaterError. 'chats', 'read',
+'download' and 'sync' only supply the work done inside the session.
 """
 
 import asyncio
