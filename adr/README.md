@@ -76,3 +76,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   as one `forwarded_from` object
 - [0017](0017-topic-and-search-as-read-filters.md) — Forum topics and search
   as `read` filters, plus a `topics` listing
+- [0018](0018-message-reactions.md) — Message reactions ("likes") for agents
+  (proposed, deferred)
