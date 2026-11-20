@@ -107,7 +107,27 @@ the file:
 tg-reader download <CHAT_ID> <MSG_ID> --output <DIR>
 ```
 
-See `tg-reader download --help` for size limits and album handling.
+For more than a few files (an album, the voice messages of a conversation,
+every attachment of a chat) use one batch run instead:
+
+```
+tg-reader download-batch <CHAT_ID> <MSG_ID> <MSG_ID> ... --output <DIR>
+tg-reader download-batch <CHAT_ID> --ids-file <FILE> --output <DIR>
+```
+
+- Never call `tg-reader download` in a loop over many messages: every run
+  reconnects to Telegram, a loop of about a hundred has earned the account a
+  50-minute flood wait, and tg-reader refuses single downloads after 20 runs
+  within an hour.
+- The batch fetches files in the given order (put what matters first), skips
+  files already in `<DIR>`, and stops at its per-run limits (200 files, 1 GB
+  by default). Exit code 2 means "stopped early": wait the `retry after Ns`
+  from stderr, then run the same command again; it continues where it
+  stopped. Its JSON report says per message what was downloaded, skipped or
+  failed, and why.
+
+See `tg-reader download --help` and `tg-reader download-batch --help` for size
+limits, album handling and the full report schema.
 
 ## 5. Add a chat to the registry
 

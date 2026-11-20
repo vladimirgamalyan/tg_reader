@@ -66,13 +66,25 @@ def retry_later_from_transient_error(error: BaseException) -> throttle.RetryLate
     )
 
 
+def flood_request_name(error: BaseException) -> str:
+    """Name of the Telegram request a flood wait was assigned to.
+
+    Telethon attaches the request to the error; knowing which one got the
+    wait (e.g. GetFileRequest vs. ExportAuthorizationRequest) is what tells
+    the cause of a penalty apart.
+    """
+    request = getattr(error, "request", None)
+    return type(request).__name__ if request is not None else "an unknown request"
+
+
 @asynccontextmanager
-async def telegram_session():
+async def telegram_session(download: bool = False):
     """Yield a connected, authorized client under the inter-process lock.
 
     The whole session runs under the lock: Telegram is only ever accessed
     by one tg-reader process at a time, and the SQLite session file is
-    never opened concurrently.
+    never opened concurrently. A 'download' session is charged against the
+    hourly download-run budget before it connects.
     """
     cfg = config.load_config()
     if cfg is None:
@@ -82,6 +94,8 @@ async def telegram_session():
     lock = throttle.acquire_lock()
     try:
         throttle.check_flood_deadline()
+        if download:
+            throttle.take_download_run()
         throttle.pace()
         client = TelegramClient(
             str(config.session_path()),
@@ -97,9 +111,10 @@ async def telegram_session():
                 )
             yield client
         except FLOOD_WAIT_ERRORS as error:
-            throttle.record_flood_wait(error.seconds)
+            request = flood_request_name(error)
+            throttle.record_flood_wait(error.seconds, {"request": request})
             raise throttle.RetryLaterError(
-                "Telegram requested a flood wait", error.seconds
+                f"Telegram requested a flood wait on {request}", error.seconds
             ) from error
         except INVALID_SESSION_ERRORS as error:
             raise NotAuthorizedError(

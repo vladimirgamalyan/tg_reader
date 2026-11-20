@@ -19,7 +19,16 @@ _MB = 1024 * 1024
 
 
 class DownloadError(PermanentError):
-    """Raised when the message cannot provide the requested file (permanent)."""
+    """Raised when the message cannot provide the requested file (permanent).
+
+    'reason' is a short machine-readable code that 'download-batch' reports
+    per message: not_found, no_media, unknown_size, too_large, no_file or
+    local_file_error.
+    """
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 # Errnos a local file write fails with; no socket operation raises these.
@@ -49,7 +58,8 @@ def _abort_when_over_limit(msg_id: int, max_size_bytes: int, max_size_mb: int):
             raise DownloadError(
                 f"Download of message {msg_id} was aborted at "
                 f"{received_bytes / _MB:.1f} MB, which exceeds the "
-                f"{max_size_mb} MB limit; pass --max-size to raise it."
+                f"{max_size_mb} MB limit; pass --max-size to raise it.",
+                "too_large",
             )
 
     return check
@@ -78,29 +88,59 @@ async def download_to_dir(
 
     The message is re-fetched here: Telegram file references expire after a
     few hours, so data captured by an earlier 'read' run cannot be reused.
-    The file is written to a '.part' name and renamed on success, so an
-    interrupted run never leaves a half-written file under the final name;
-    an existing file is overwritten (same message - same path, same content).
     """
     entity = await resolve_chat(client, chat_id)
     message = await client.get_messages(entity, ids=msg_id)
     if message is None:
-        raise DownloadError(f"Message {msg_id} not found in chat {chat_id}.")
+        raise DownloadError(
+            f"Message {msg_id} not found in chat {chat_id}.", "not_found"
+        )
+    info = media_to_download(message, max_size_mb)
+    return await save_media(client, chat_id, message, info, output_dir, max_size_mb)
+
+
+def media_to_download(message, max_size_mb: int) -> dict:
+    """Return the media_info of a message's attachment if it may be fetched.
+
+    Refuses, with no bytes spent, a message without a downloadable file
+    and one whose file is too large or of unknown size.
+    """
+    msg_id = message.id
     info = media_info(message.media)
     if info is None:
-        raise DownloadError(f"Message {msg_id} has no downloadable media.")
+        raise DownloadError(f"Message {msg_id} has no downloadable media.", "no_media")
     size = info["size_bytes"]
-    max_size_bytes = max_size_mb * _MB
     if size is None:
         raise DownloadError(
             f"Media size of message {msg_id} is unknown, so it cannot be checked "
-            f"against the {max_size_mb} MB limit."
+            f"against the {max_size_mb} MB limit.",
+            "unknown_size",
         )
-    if size > max_size_bytes:
+    if size > max_size_mb * _MB:
         raise DownloadError(
             f"Media of message {msg_id} is {size / _MB:.1f} MB, which exceeds "
-            f"the {max_size_mb} MB limit; pass --max-size to raise it."
+            f"the {max_size_mb} MB limit; pass --max-size to raise it.",
+            "too_large",
         )
+    return info
+
+
+async def save_media(
+    client: TelegramClient,
+    chat_id: int,
+    message,
+    info: dict,
+    output_dir: Path,
+    max_size_mb: int,
+) -> dict:
+    """Transfer the attachment checked by media_to_download, return a summary.
+
+    The file is written to a '.part' name and renamed on success, so an
+    interrupted run never leaves a half-written file under the final name;
+    an existing file is overwritten (same message - same path, same content).
+    """
+    msg_id = message.id
+    max_size_bytes = max_size_mb * _MB
     target = output_dir / build_filename(chat_id, msg_id, info)
     part = target.with_name(target.name + ".part")
     try:
@@ -116,7 +156,8 @@ async def download_to_dir(
         part.unlink()
     except OSError as error:
         raise DownloadError(
-            f"Output directory {output_dir} is not usable ({error})."
+            f"Output directory {output_dir} is not usable ({error}).",
+            "local_file_error",
         ) from error
     try:
         try:
@@ -129,7 +170,9 @@ async def download_to_dir(
                 ),
             )
             if downloaded is None:
-                raise DownloadError(f"Telegram returned no file for message {msg_id}.")
+                raise DownloadError(
+                    f"Telegram returned no file for message {msg_id}.", "no_file"
+                )
             downloaded_size = part.stat().st_size
         except OSError as error:
             # Telethon surfaces local file-write failures (disk full, an
@@ -139,19 +182,22 @@ async def download_to_dir(
             if not _is_local_file_error(error):
                 raise
             raise DownloadError(
-                f"Cannot write the download to {part} ({error})."
+                f"Cannot write the download to {part} ({error}).",
+                "local_file_error",
             ) from error
         if downloaded_size > max_size_bytes:
             raise DownloadError(
                 f"Downloaded media of message {msg_id} is "
                 f"{downloaded_size / _MB:.1f} MB, which exceeds the "
-                f"{max_size_mb} MB limit."
+                f"{max_size_mb} MB limit.",
+                "too_large",
             )
         try:
             os.replace(part, target)
         except OSError as error:
             raise DownloadError(
-                f"Cannot move the download into place at {target} ({error})."
+                f"Cannot move the download into place at {target} ({error}).",
+                "local_file_error",
             ) from error
     finally:
         # Best-effort cleanup: a failure here (e.g. an antivirus still
@@ -182,7 +228,9 @@ async def run_download(
     """Entry point for the 'download' command: one download inside a session.
 
     A large download holds the inter-process lock for its whole duration by
-    design: one process talking to Telegram at a time.
+    design: one process talking to Telegram at a time. Each run draws on
+    the hourly download-run budget: many files belong in one
+    'download-batch' run instead.
     """
-    async with telegram_session() as client:
+    async with telegram_session(download=True) as client:
         return await download_to_dir(client, chat_id, msg_id, output_dir, max_size_mb)

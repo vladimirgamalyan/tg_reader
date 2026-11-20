@@ -12,7 +12,7 @@ and is run manually by the user.
 
 ## Scope
 
-A single `tg-reader` command with six subcommands:
+A single `tg-reader` command with seven subcommands:
 
 1. **`tg-reader auth`** — one-time interactive authorization; stores
    credentials and creates a Telethon session file.
@@ -22,8 +22,10 @@ A single `tg-reader` command with six subcommands:
    ID and prints them as JSON, including media metadata.
 4. **`tg-reader download`** — downloads the media attachment of one message
    to a local directory.
-5. **`tg-reader topics`** — lists the topics of a forum group with their IDs.
-6. **`tg-reader sync`** — keeps an incremental local archive of one chat
+5. **`tg-reader download-batch`** — downloads the media of many messages of
+   one chat over one connection, paced and capped per run.
+6. **`tg-reader topics`** — lists the topics of a forum group with their IDs.
+7. **`tg-reader sync`** — keeps an incremental local archive of one chat
    (a JSONL file) for going through long conversations.
 
 Non-goals for now: sending messages, real-time monitoring.
@@ -81,7 +83,10 @@ Directory contents:
 - `config.json` — `api_id` and `api_hash`; created by the `auth` command
 - `tg_reader.session` — Telethon session file; created by the `auth` command
 - `throttle.json` — flood protection state (last run timestamp, active
-  FloodWait deadline); created and managed automatically
+  FloodWait deadline, the download-run budget, and `last_flood`: a
+  diagnostic record of the last long FloodWait — when, how long, which
+  request got it and how far a batch had come); created and managed
+  automatically
 - `tg_reader.lock` — inter-process lock file; created automatically
 - `archive/` — per-chat message archives (`<chat id>.jsonl`); created by
   `tg-reader sync`
@@ -278,9 +283,9 @@ tg-reader read CHAT_ID [--limit N] [--offset-id MSG_ID] [--topic TOPIC_ID | --se
   use the utility from this help alone, without reading the code or docs.
   In particular, the help of both `read` and `download` must explain album
   semantics: an album is several messages sharing one `grouped_id`, each
-  with its own message ID and media; to fetch a whole album, download each
-  of its messages one by one, and paginate with `--offset-id` if the album
-  is cut off by the `--limit` window.
+  with its own message ID and media; to fetch a whole album, pass all its
+  message IDs to `download-batch`, and paginate with `--offset-id` if the
+  album is cut off by the `--limit` window.
 
 ### tg-reader download
 
@@ -293,8 +298,11 @@ agent: run `read`, inspect the `media` metadata (type, size), then download
 the specific messages that are worth fetching.
 
 - `CHAT_ID` — same formats as `read`. `MSG_ID` — positive message ID from the
-  `read` output. One message per run; to fetch an album, run `download` once
-  per album message (see `grouped_id` above).
+  `read` output. One message per run; for more than a few messages (an
+  album, see `grouped_id` above, or the attachments of a conversation) use
+  `download-batch`. A loop of `download` runs is the pattern that drew a
+  50-minute FloodWait (ADR-0019), and the download-run budget refuses it
+  after 20 runs within an hour.
 - `--output DIR` — required destination directory; created if missing.
 - `--max-size MB` — refuse to download files larger than this (default:
   100). Protects an agent from accidentally pulling a multi-GB video; the
@@ -323,7 +331,8 @@ the specific messages that are worth fetching.
   downloadable media, file size is unknown, file exceeds the size cap, a
   local file failure such as an unwritable output directory or a full
   disk), `2` for "temporarily unavailable, retry after Ns" (lock held by
-  another process, active flood wait, network down). Local filesystem
+  another process, active flood wait, download-run budget used up,
+  network down). Local filesystem
   errors during the transfer are told apart from network errors by the
   exception's file path and errno (`ENOSPC` and friends), so a full disk
   is never misreported as "cannot reach Telegram".
@@ -352,6 +361,79 @@ they are never used verbatim:
 - Data is written to a `<name>.part` temporary file and renamed on success,
   so an interrupted run never leaves a half-written file under the final
   name.
+
+### tg-reader download-batch
+
+```
+tg-reader download-batch CHAT_ID [MSG_ID ...] [--ids-file FILE|-] --output DIR
+                         [--max-size MB] [--pause SEC] [--max-files N] [--max-total MB]
+```
+
+Downloads the media of many messages of one chat in one run, over one
+connection. Design rationale and the FloodWait it answers: ADR-0019.
+
+- Input: message IDs as arguments and/or from `--ids-file` (whitespace
+  separated, `-` reads stdin), arguments first; duplicates are dropped,
+  the order is kept. Files are transferred in that order, so the caller
+  puts what matters most first.
+- Files get exactly the names of `download` (see "File naming"), through
+  the same transfer code (`.part` + rename, `--max-size` checked before and
+  during the transfer, local file errors classified per ADR-0008).
+- A message whose file is already in `--output` — any name starting with
+  `<chat_id>_<msg_id>_`, except `.part` leftovers — is skipped without a
+  request. When nothing else is left, the run does not even connect.
+  Rerunning the same command after the run stopped therefore continues
+  where it left off.
+- Messages are fetched with GetMessages, up to 100 IDs per request, right
+  before their files are transferred; a fetched message older than 30
+  minutes is fetched again, since file references expire.
+- Pacing and caps per run: a pause of `--pause` seconds (default 3,
+  1..60) plus a random 0–50 % between two transfers; at most `--max-files`
+  transfers (default 200, 1..1000) and `--max-total` MB of declared file
+  size (default 1024, 1..4096, at least `--max-size`). The run stops before
+  a transfer that would exceed a cap and reports `retry after 900s`
+  (advisory rest before the next run).
+- FloodWait: up to 30 s it is slept through in place by Telethon and noted
+  on stderr; a longer one stops the run, the deadline is persisted like
+  for every command (later runs refuse until it expires), and
+  `last_flood` in `throttle.json` records the request and how many files
+  and bytes the run had downloaded. A lost connection also stops the run.
+- Output: one JSON object on stdout, printed whatever the exit code once
+  the run got to downloading:
+
+  ```json
+  {
+    "results": [
+      {"message_id": 101, "status": "downloaded", "type": "voice", "file": "C:\\out\\468932869_101_voice.ogg", "size_bytes": 23456},
+      {"message_id": 102, "status": "skipped", "reason": "already_downloaded", "file": "C:\\out\\468932869_102_photo.jpg", "size_bytes": 81234},
+      {"message_id": 103, "status": "skipped", "reason": "no_media", "error": "Message 103 has no downloadable media."},
+      {"message_id": 104, "status": "failed", "reason": "telegram_error", "error": "..."},
+      {"message_id": 105, "status": "pending"}
+    ],
+    "summary": {"requested": 5, "downloaded": 1, "skipped": 2, "failed": 1, "pending": 1, "downloaded_bytes": 23456},
+    "stopped": {"reason": "flood_wait", "error": "Telegram requested a flood wait on GetFileRequest after 1 files downloaded in this run", "retry_after": 3026}
+  }
+  ```
+
+  - `status`: `downloaded`; `skipped` with a `reason` a retry will not
+    change (`already_downloaded`, `not_found`, `no_media`, `unknown_size`,
+    `too_large`); `failed` with a `reason` the next run retries
+    (`local_file_error`, which also stops the run, `no_file`,
+    `telegram_error` — Telegram rejected a request about that one file);
+    `pending` — not attempted because the run stopped first.
+  - `stopped`: `null` when every message got an outcome; otherwise
+    `reason` (`max_files`, `max_total`, `flood_wait`, `network`,
+    `local_file_error`), `error` and `retry_after` (seconds, `null` for
+    `local_file_error`).
+- Exit codes: `0` — every message downloaded or skipped; `1` — permanent
+  error before the start (bad arguments, unreadable `--ids-file`, unknown
+  chat, not authorized; stdout empty), or some messages `failed`, or the
+  run stopped on `local_file_error` (report on stdout); `2` — the run
+  stopped early and the same command continues later: a run cap, a long
+  FloodWait, the network (report on stdout); or it could not start: lock
+  held, an active FloodWait, the download-run budget used up (stdout
+  empty). The stderr message ends with `retry after Ns`.
+- The run holds the global lock throughout, like a long `sync`.
 
 ### tg-reader topics
 
@@ -421,8 +503,9 @@ Design rationale: ADR-0014.
 ### access_hash resolution
 
 Telethon needs an `access_hash` to address channels and users; known entities
-are cached in the session file. `tg-reader read`, `tg-reader download` and
-`tg-reader sync` resolve the chat automatically:
+are cached in the session file. `tg-reader read`, `tg-reader download`,
+`tg-reader download-batch` and `tg-reader sync` resolve the chat
+automatically:
 
 1. Try the session entity cache first.
 2. If the ID is unknown, iterate the account's dialogs until the chat is found
@@ -454,7 +537,18 @@ policy constants live at the top of the module.
   (Telethon's `flood_sleep_threshold`). Longer waits abort the run and the
   deadline is persisted to `throttle.json`; until it expires, every run
   fails fast with exit code 2 without touching the network, so retries and
-  parallel callers cannot escalate the penalty.
+  parallel callers cannot escalate the penalty. The error message names
+  the request that got the wait, and `last_flood` in `throttle.json` keeps
+  it (plus a batch's progress) for diagnosing the cause later.
+- **Download-run budget** — every `download` and `download-batch` run
+  opens a new connection and exports the account's authorization to each
+  other data center its files live on (`auth.exportAuthorization`, the
+  likeliest trigger); a loop of about a hundred single downloads drew
+  a 50-minute FloodWait. Both commands therefore draw on a token bucket in
+  `throttle.json`: up to 20 runs back to back, refilled at 20 per hour.
+  When it is used up, the run fails with exit code 2 before connecting,
+  pointing at `download-batch`, which costs one run for any number of
+  files (ADR-0019).
 - **Pacing** — consecutive runs are spaced at least 2 s apart (the process
   sleeps under the lock), smoothing out bursts from a misbehaving caller.
 - **Bounded requests** — `--limit` is capped at 100, so one `read` run costs
@@ -467,9 +561,11 @@ policy constants live at the top of the module.
   GetForumTopics request. A `sync` is
   unbounded too (one GetHistory request per 100 messages); its
   bound is the `--since` date, and its requests are spaced at least 2 s
-  apart like separate runs.
-- **Downloads and syncs hold the lock** — a large download or a long sync
-  keeps the global lock for its whole duration; a concurrent `tg-reader`
+  apart like separate runs. A `download-batch` is bounded per run by
+  `--max-files` and `--max-total`, its transfers spaced by `--pause`, and
+  costs one GetMessages request per 100 messages.
+- **Downloads and syncs hold the lock** — a large download, a batch or a
+  long sync keeps the global lock for its whole duration; a concurrent `tg-reader`
   run waits for the lock up to 30 s, then fails with exit code 2. This is
   intentional: one process talking to Telegram at a time is the whole point
   of the lock.
@@ -486,7 +582,11 @@ protection (FloodWait deadline persistence, pacing, lock behavior —
 path), filename sanitization (path traversal, Windows-forbidden characters,
 reserved device names, missing/overlong names), and the download flow
 (size-cap refusal, `.part` rename on success and cleanup on failure,
-no-media and message-not-found errors), and the archive sync (first sync
+no-media and message-not-found errors), the batch download (input order,
+skipping files already present without a connection, GetMessages in
+chunks of 100 and refetching stale messages, pauses, run caps, per-message
+outcomes, short and long FloodWait, exit codes), the download-run budget,
+and the archive sync (first sync
 from `--since`, incremental append, resume after an interrupted fetch,
 local file errors reported as permanent), and the chat listing (types,
 `--query` and `--unread` filtering, migrated groups skipped), forwarded
@@ -507,7 +607,7 @@ A package with src layout and a `tg-reader` entry point in `[project.scripts]`:
 ```
 src/tg_reader/
     __init__.py
-    cli.py        # argparse: auth/chats/read/topics/download/sync subcommands, --help texts
+    cli.py        # argparse: auth/chats/read/topics/download/download-batch/sync subcommands, --help texts
     auth.py       # authorization logic
     session.py    # shared session scaffolding: lock, flood gate, connect, auth check
     chats.py      # chat (dialog) listing
@@ -515,8 +615,9 @@ src/tg_reader/
     read.py       # message reading logic
     media.py      # media metadata extraction, safe filename construction
     download.py   # media download logic
+    batch.py      # batch download: many messages over one connection, paced and capped
     sync.py       # local chat archive (JSONL) sync logic
-    throttle.py   # flood protection: lock, FloodWait state, pacing
+    throttle.py   # flood protection: lock, FloodWait state, pacing, download-run budget
     errors.py     # PermanentError: base class for exit-code-1 failures
     config.py     # user directory, config.json load/save
 docs/PROJECT.md   # this file

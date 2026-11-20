@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodPremiumWaitError, FloodWaitError
+from telethon.tl.functions.auth import ExportAuthorizationRequest
 from telethon.tl.types import (
     Document,
     DocumentAttributeFilename,
@@ -432,6 +433,42 @@ async def test_run_download_flood_wait_persists_deadline(config_dir, tmp_path, m
     )
     assert state["flood_until"] > time.time()
     client.disconnect.assert_awaited_once()
+
+
+async def test_run_download_flood_wait_names_the_request(config_dir, tmp_path, mocker):
+    # Which request got the wait is what tells its cause apart: it goes into
+    # the error message and into the state file's diagnostic record.
+    client = make_connected_client(mocker, make_media_message())
+    client.download_media = AsyncMock(
+        side_effect=FloodWaitError(
+            request=ExportAuthorizationRequest(dc_id=4), capture=77
+        )
+    )
+
+    with pytest.raises(RetryLaterError, match="on ExportAuthorizationRequest"):
+        await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)
+
+    state = json.loads(
+        (config_dir / throttle.STATE_FILENAME).read_text(encoding="utf-8")
+    )
+    assert state["last_flood"]["request"] == "ExportAuthorizationRequest"
+
+
+async def test_run_download_refuses_when_download_runs_are_used_up(
+    config_dir, tmp_path, mocker
+):
+    # A loop of single downloads (one connection and authorization export
+    # per file) runs the budget dry and is refused before connecting.
+    (config_dir / throttle.STATE_FILENAME).write_text(
+        json.dumps({"download_runs": 0, "download_runs_at": time.time()}),
+        encoding="utf-8",
+    )
+    client_class = mocker.patch("tg_reader.session.TelegramClient")
+
+    with pytest.raises(RetryLaterError, match="download-batch"):
+        await run_download(-100123, 555, tmp_path / "files", max_size_mb=100)
+
+    client_class.assert_not_called()
 
 
 async def test_run_download_premium_flood_wait_maps_to_retry_later(

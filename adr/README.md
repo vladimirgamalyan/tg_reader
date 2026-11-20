@@ -78,3 +78,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   as `read` filters, plus a `topics` listing
 - [0018](0018-message-reactions.md) — Message reactions ("likes") for agents
   (proposed, deferred)
+- [0019](0019-batch-download-and-download-run-budget.md) — Batch download
+  over one connection, with run limits and a download-run budget

@@ -5,12 +5,15 @@ FLOOD_WAIT, so the wait deadline is persisted to disk and every subsequent
 run refuses to touch the network until it expires. A single inter-process
 lock serializes runs (parallel processes would also corrupt the SQLite
 session file), and a minimum interval between runs smooths out bursts from
-a misbehaving caller.
+a misbehaving caller. Download runs also draw on an hourly budget, so a
+loop of single downloads cannot repeat the per-run connection and
+authorization export that once drew a 50-minute FloodWait.
 """
 
 import json
 import math
 import time
+from datetime import datetime, timezone
 
 from filelock import FileLock, Timeout
 
@@ -35,6 +38,17 @@ NETWORK_RETRY_HINT = 30
 MAX_FLOOD_WAIT = 86400
 # Upper bound for --limit: keeps one run to a single GetHistory request.
 MAX_LIMIT = 100
+# Budget of download runs ('download' and 'download-batch'), as a token
+# bucket: up to this many runs back to back, refilled at this many per
+# hour. Every such run connects anew and exports the account's
+# authorization to each other data center its files live on: the likeliest
+# trigger of a 50-minute FloodWait after ~100 single downloads (ADR-0019).
+# One 'download-batch' run costs one run however many files it fetches.
+DOWNLOAD_RUNS_PER_HOUR = 20
+# Diagnostic record of the last persisted flood wait: which request got it
+# and how far a batch had come. Written for a human reading the state file;
+# the tool never acts on it.
+LAST_FLOOD_KEY = "last_flood"
 
 
 class RetryLaterError(Exception):
@@ -67,11 +81,13 @@ def _load_state() -> dict:
         return {}
     # Guard against JSON-valid damage (e.g. a hand-edited file) as well: a
     # non-numeric value would raise TypeError in the arithmetic below on
-    # every run until the file is deleted.
+    # every run until the file is deleted. The diagnostic flood record is
+    # the one non-numeric entry; it is never computed with.
     return {
         key: value
         for key, value in data.items()
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        if (isinstance(value, (int, float)) and not isinstance(value, bool))
+        or (key == LAST_FLOOD_KEY and isinstance(value, dict))
     }
 
 
@@ -145,13 +161,49 @@ def pace() -> None:
     _save_state(state)
 
 
-def record_flood_wait(seconds: float) -> None:
+def take_download_run() -> None:
+    """Spend one download run from the hourly budget, or refuse.
+
+    Must be called under the lock: it read-modify-writes the state file.
+    """
+    state = _load_state()
+    now = time.time()
+    rate = DOWNLOAD_RUNS_PER_HOUR / 3600
+    # Clamped on both ends: a backwards clock jump or a damaged state file
+    # must neither mint runs nor lock downloads out for longer than one
+    # refill interval.
+    elapsed = max(0.0, now - state.get("download_runs_at", now))
+    available = min(
+        DOWNLOAD_RUNS_PER_HOUR,
+        max(0.0, state.get("download_runs", DOWNLOAD_RUNS_PER_HOUR)) + elapsed * rate,
+    )
+    if available < 1:
+        raise RetryLaterError(
+            f"the budget of {DOWNLOAD_RUNS_PER_HOUR} download runs per hour is "
+            "used up; fetch many files with one 'tg-reader download-batch' run "
+            "instead of one 'download' run per file",
+            (1 - available) / rate,
+        )
+    state["download_runs"] = available - 1
+    state["download_runs_at"] = now
+    _save_state(state)
+
+
+def record_flood_wait(seconds: float, details: dict | None = None) -> None:
     """Persist the FloodWait deadline so later runs refuse until it expires.
 
     The duration is stored alongside the deadline: after a backwards clock
-    jump it bounds how long the stale deadline may stall the tool.
+    jump it bounds how long the stale deadline may stall the tool. 'details'
+    (the request that got the wait, a batch's progress) goes into the
+    diagnostic 'last_flood' record.
     """
     state = _load_state()
-    state["flood_until"] = time.time() + seconds
+    now = time.time()
+    state["flood_until"] = now + seconds
     state["flood_seconds"] = seconds
+    state[LAST_FLOOD_KEY] = {
+        "at": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
+        "seconds": seconds,
+        **(details or {}),
+    }
     _save_state(state)

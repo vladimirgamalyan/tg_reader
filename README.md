@@ -44,6 +44,10 @@ installed skill copies do not update on their own.
 - `tg-reader topics CHAT_ID` — list the topics of a forum group with their IDs
 - `tg-reader download CHAT_ID MSG_ID --output DIR` — download the media
   attachment of one message (message IDs and media metadata come from `read`)
+- `tg-reader download-batch CHAT_ID [MSG_ID ...] [--ids-file FILE] --output DIR`
+  — download the media of many messages of one chat over one connection,
+  paced and capped per run; rerunning it continues where it stopped. Use it
+  instead of a loop of `download`, which Telegram rate-limits
 - `tg-reader sync CHAT_ID [--since YYYY-MM-DD]` — keep an incremental local
   archive of one chat (a JSONL file) for going through long conversations
 

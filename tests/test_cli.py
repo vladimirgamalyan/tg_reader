@@ -126,7 +126,7 @@ def test_download_success_prints_json(mocker, capsys):
 def test_download_error_exits_1(mocker, capsys):
     mocker.patch(
         "tg_reader.cli.run_download",
-        new=AsyncMock(side_effect=DownloadError("no media")),
+        new=AsyncMock(side_effect=DownloadError("no media", "no_media")),
     )
 
     exit_code = cli.main(["download", "-100123", "555", "--output", "out"])

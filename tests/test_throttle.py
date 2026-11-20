@@ -132,6 +132,20 @@ def test_record_flood_wait(config_dir):
     assert state["flood_seconds"] == 60
 
 
+def test_record_flood_wait_keeps_diagnostic_record(config_dir, mocker):
+    # What got the wait is kept for a human diagnosing the penalty, and the
+    # next run's read-modify-write of the state must not drop it.
+    mocker.patch("tg_reader.throttle.time.sleep")
+
+    throttle.record_flood_wait(3026, {"request": "GetFileRequest"})
+    throttle.pace()
+
+    record = read_state(config_dir)["last_flood"]
+    assert record["seconds"] == 3026
+    assert record["request"] == "GetFileRequest"
+    assert record["at"].endswith("+00:00")
+
+
 def test_record_flood_wait_preserves_old_state_when_temp_write_fails(
     config_dir, mocker
 ):
@@ -215,6 +229,54 @@ def test_pace_preserves_flood_deadline(config_dir, mocker):
     throttle.pace()
 
     assert read_state(config_dir)["flood_until"] == 12345.0
+
+
+# --- download-run budget ---
+
+
+def test_download_runs_allow_a_burst_then_refuse(config_dir):
+    for _ in range(throttle.DOWNLOAD_RUNS_PER_HOUR):
+        throttle.take_download_run()
+
+    with pytest.raises(RetryLaterError, match="download-batch") as excinfo:
+        throttle.take_download_run()
+
+    # One run comes back every 3600 / DOWNLOAD_RUNS_PER_HOUR seconds.
+    refill = 3600 / throttle.DOWNLOAD_RUNS_PER_HOUR
+    assert refill - 5 < excinfo.value.retry_after <= refill
+
+
+def test_download_runs_refill_over_time(config_dir):
+    refill = 3600 / throttle.DOWNLOAD_RUNS_PER_HOUR
+    write_state(config_dir, download_runs=0, download_runs_at=time.time() - refill - 1)
+
+    throttle.take_download_run()
+
+    with pytest.raises(RetryLaterError):
+        throttle.take_download_run()
+
+
+def test_download_runs_not_minted_by_backwards_clock(config_dir):
+    # A timestamp in the future (clock jumped backwards) must not count as
+    # negative elapsed time that drains the budget, nor as time that
+    # refills it.
+    write_state(config_dir, download_runs=0, download_runs_at=time.time() + 3600)
+
+    with pytest.raises(RetryLaterError) as excinfo:
+        throttle.take_download_run()
+
+    assert excinfo.value.retry_after <= 3600 / throttle.DOWNLOAD_RUNS_PER_HOUR
+
+
+def test_download_runs_damaged_count_is_bounded(config_dir):
+    # A damaged (negative) count must not lock downloads out for longer
+    # than one refill interval.
+    write_state(config_dir, download_runs=-1e9, download_runs_at=time.time())
+
+    with pytest.raises(RetryLaterError) as excinfo:
+        throttle.take_download_run()
+
+    assert excinfo.value.retry_after <= 3600 / throttle.DOWNLOAD_RUNS_PER_HOUR
 
 
 # --- inter-process lock ---

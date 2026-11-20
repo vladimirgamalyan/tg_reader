@@ -12,12 +12,24 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 from .auth import run_auth
+from .batch import (
+    DEFAULT_MAX_FILES,
+    DEFAULT_MAX_TOTAL_MB,
+    DEFAULT_PAUSE,
+    MAX_MAX_FILES,
+    MAX_MAX_TOTAL_MB,
+    MAX_PAUSE,
+    MIN_PAUSE,
+    RUN_LIMIT_RETRY,
+    BatchLimits,
+    run_download_batch,
+)
 from .chats import run_chats
 from .download import DEFAULT_MAX_SIZE_MB, run_download
 from .errors import PermanentError
 from .read import run_read
 from .sync import run_sync
-from .throttle import MAX_LIMIT, RetryLaterError
+from .throttle import DOWNLOAD_RUNS_PER_HOUR, MAX_LIMIT, RetryLaterError
 from .topics import MAX_TOPICS, run_topics
 
 MAIN_DESCRIPTION = """\
@@ -44,12 +56,16 @@ examples:
   tg-reader topics -1001234567890     topics of a forum group
   tg-reader download -1001234567890 555 --output ./files
                                       save the media of message 555
+  tg-reader download-batch -1001234567890 555 556 557 --output ./files
+                                      save the media of many messages
+                                      in one run (never loop 'download')
   tg-reader sync -1001234567890 --since 2026-09-01
                                       archive a long conversation locally
   tg-reader chats --help              full 'chats' reference
   tg-reader read --help               full 'read' reference (arguments,
                                       CHAT_ID formats, JSON output schema)
   tg-reader download --help           full 'download' reference
+  tg-reader download-batch --help     full 'download-batch' reference
   tg-reader topics --help             full 'topics' reference
   tg-reader sync --help               full 'sync' reference
 """
@@ -219,7 +235,7 @@ albums (grouped media):
   An album (several photos/files sent together) is several separate
   messages sharing one grouped_id, each with its own id and its own media;
   the caption text is carried by only one of them. To fetch a whole album,
-  run 'tg-reader download' once per album message. Album message IDs are
+  pass all its message IDs to 'tg-reader download-batch'. Album message IDs are
   usually consecutive, but that is not guaranteed -- always use the actual
   id values. If the oldest messages in the output carry a grouped_id, the
   album may be cut off by --limit: paginate with --offset-id to fetch the
@@ -299,8 +315,15 @@ print a JSON object describing the saved file to stdout.
 
 Intended flow: run 'tg-reader read' first, inspect the 'media' field of the
 messages (type, size) and pick the message IDs worth fetching, then run this
-command once per message. The message is re-fetched at download time, so it
+command for the message. The message is re-fetched at download time, so it
 does not matter how old the 'read' output is.
+
+For more than a few messages use 'tg-reader download-batch' instead, never
+a loop of this command: every 'download' run opens a new connection to
+Telegram (and often a new authorization on the data center holding the
+file), which Telegram rate-limits: a loop of about a hundred runs has
+earned the account a 50-minute flood wait. Repeated runs are also capped
+by tg-reader itself (see 'flood protection' below).
 
 CHAT_ID is a non-zero numeric chat/channel/user ID, same accepted forms as in
 'tg-reader read' (see its --help). MSG_ID is the positive 'id' field from
@@ -317,7 +340,7 @@ output. Media with unknown size is refused because --max-size cannot be
 checked before the transfer.
 """
 
-DOWNLOAD_EPILOG = """\
+DOWNLOAD_EPILOG = f"""\
 output schema (single JSON object on stdout):
   message_id   int    ID of the message the file came from
   type         str    photo|video|audio|voice|video_note|sticker|gif|document
@@ -327,8 +350,8 @@ output schema (single JSON object on stdout):
 albums (grouped media):
   An album is several messages sharing one 'grouped_id' (see the 'read'
   output), each with its own message ID and its own media. This command
-  downloads exactly one message; to fetch a whole album, run it once per
-  album message.
+  downloads exactly one message; to fetch a whole album, pass all its
+  message IDs to 'tg-reader download-batch'.
 
 errors and exit codes:
   All errors are printed to stderr; stdout stays empty.
@@ -346,16 +369,132 @@ errors and exit codes:
      'retry after Ns': wait that long, then retry the same command.
      Causes: another tg-reader run (downloads can take a while; a
      concurrent run waits up to 30s for the lock, then fails), a Telegram
-     flood wait, or the network is down.
+     flood wait, the download-run budget is used up (see below), or the
+     network is down.
 
 flood protection (automatic, no configuration):
   Same as 'read': only one tg-reader process talks to Telegram at a time,
   consecutive runs are spaced at least 2 seconds apart, and Telegram
-  flood waits are respected across runs.
+  flood waits are respected across runs. In addition, 'download' and
+  'download-batch' runs share a budget: up to {DOWNLOAD_RUNS_PER_HOUR} runs back to back,
+  refilled at {DOWNLOAD_RUNS_PER_HOUR} per hour (one per {3600 // DOWNLOAD_RUNS_PER_HOUR // 60} minutes). When it is used up, the
+  run fails with exit code 2 before connecting. One 'download-batch' run
+  costs one run, however many files it fetches.
 
 examples:
   tg-reader download -1001234567890 555 --output ./files
   tg-reader download -1001234567890 555 --output ./files --max-size 500
+"""
+
+DOWNLOAD_BATCH_DESCRIPTION = """\
+Download the media attachments of many messages of one chat in a single
+run, then print a JSON report to stdout. Use it whenever more than a few
+files are needed (a whole album, the voice messages of a conversation,
+every attachment of a chat): the whole run uses one connection to
+Telegram, while a loop of 'tg-reader download' runs reconnects for every
+file and runs into Telegram's rate limits.
+
+CHAT_ID: same accepted forms as in 'tg-reader read' (see its --help).
+Message IDs (the 'id' field of the 'read' output) come as MSG_ID arguments
+and/or from --ids-file: a file, or '-' for stdin, with the IDs separated
+by whitespace (e.g. one per line). Put a long list in a file. Duplicates
+are dropped. Files are fetched in the order given: put what matters most
+first, in case the run stops early.
+
+Files get exactly the names 'tg-reader download' gives them:
+'<CHAT_ID>_<MSG_ID>_<name>' in --output DIR (see 'download --help'). A
+message that already has a file starting with '<CHAT_ID>_<MSG_ID>_' in DIR
+is skipped without any request to Telegram ('.part' leftovers of an
+interrupted transfer do not count). So rerunning the same command after
+the run stopped continues where it left off, and a batch whose files are
+all there costs no network at all.
+
+The messages are fetched from Telegram 100 per request, right before
+their files are transferred (fetched again if a run goes on for long, as
+file references expire).
+"""
+
+DOWNLOAD_BATCH_EPILOG = f"""\
+limits (per run; the run stops before a transfer that would exceed one):
+  --pause SEC      pause between two file transfers, plus a random 0-50%
+                   on top (default: {DEFAULT_PAUSE}, allowed {MIN_PAUSE}..{MAX_PAUSE})
+  --max-files N    file transfers per run (default: {DEFAULT_MAX_FILES}, allowed 1..{MAX_MAX_FILES})
+  --max-total MB   total size of the files transferred per run (default:
+                   {DEFAULT_MAX_TOTAL_MB}, allowed 1..{MAX_MAX_TOTAL_MB}, at least --max-size)
+  --max-size MB    per file, as in 'download' (default: {DEFAULT_MAX_SIZE_MB})
+  A run stopped by --max-files or --max-total exits with code 2 and
+  'retry after {RUN_LIMIT_RETRY}s': rest that long, then run the same command again.
+
+output schema (single JSON object on stdout):
+  results  arr  one element per requested message ID, in input order:
+    message_id  int       the message ID
+    status      str       downloaded | skipped | failed | pending
+    reason      str       'skipped' and 'failed' only, why:
+                            skipped (a retry will not change it):
+                              already_downloaded  a file of this message
+                                                  is in --output already
+                              not_found           no such message
+                              no_media            no downloadable media
+                              unknown_size        size unknown, so
+                                                  --max-size cannot be
+                                                  checked
+                              too_large           over --max-size
+                            failed (the next run tries again):
+                              local_file_error    the file cannot be
+                                                  written (unwritable
+                                                  --output, disk full);
+                                                  stops the run
+                              no_file             Telegram returned no file
+                              telegram_error      Telegram rejected a
+                                                  request for this file
+    error       str       human-readable explanation; 'skipped' (except
+                          already_downloaded) and 'failed' only
+    type        str       'downloaded' only: media type, as in 'download'
+    file        str       'downloaded' and already_downloaded: absolute
+                          path of the file
+    size_bytes  int       'downloaded' and already_downloaded: file size
+    'pending' means not attempted: the run stopped first (see 'stopped').
+  summary  obj  counts: requested, downloaded, skipped, failed, pending;
+                and downloaded_bytes, the size of the files this run
+                downloaded
+  stopped  obj|null  null when every message got an outcome; otherwise
+                why the run ended early:
+    reason       str       max_files | max_total (a run limit), flood_wait
+                           (Telegram assigned a wait over 30s), network
+                           (Telegram unreachable), local_file_error
+    error        str       human-readable explanation
+    retry_after  int|null  seconds to wait before running the same command
+                           again; null for local_file_error
+
+errors and exit codes:
+  The report is printed to stdout whenever the run got to downloading,
+  whatever the exit code. stdout stays empty only when the run could not
+  start; the error is then on stderr, as for the other commands.
+  0  every message was downloaded or skipped
+  1  permanent error: bad arguments, an unreadable --ids-file, unknown
+     chat, not authorized (stdout empty); or some messages 'failed', or
+     the run stopped on local_file_error (report on stdout). Fix the cause
+     before running the same command again; it retries 'failed' messages.
+  2  stopped early, retry later: the stderr message ends with
+     'retry after Ns'; wait that long, then run the same command again: it
+     continues with the 'pending' messages. Causes: a run limit
+     (--max-files, --max-total), a Telegram flood wait (until it expires,
+     every tg-reader run fails fast with exit code 2), the network; or,
+     before the start (stdout empty): another tg-reader process, an
+     active flood wait, the download-run budget (see 'download --help').
+
+flood protection:
+  One connection for the whole run. Telegram waits of up to 30s are slept
+  through in place and noted on stderr; a longer one stops the run and is
+  recorded in the tg-reader state file together with the request that got
+  it. The run holds the tg-reader lock throughout: other tg-reader commands
+  wait up to 30s, then fail with exit code 2, until it ends. Each run costs
+  one run of the download-run budget shared with 'download'.
+
+examples:
+  tg-reader download-batch 123456789 101 102 103 --output ./files
+  tg-reader download-batch 123456789 --ids-file ids.txt --output ./files
+  tg-reader download-batch 123456789 --ids-file - --output ./files < ids.txt
 """
 
 SYNC_DESCRIPTION = """\
@@ -479,6 +618,16 @@ def limit_type(value: str) -> int:
 
 def max_size_type(value: str) -> int:
     return positive_int_type(value)
+
+
+def bounded_int_type(low: int, high: int):
+    def parse(value: str) -> int:
+        number = _parse_int(value)
+        if not low <= number <= high:
+            raise argparse.ArgumentTypeError(f"must be between {low} and {high}")
+        return number
+
+    return parse
 
 
 def date_type(value: str) -> date:
@@ -617,6 +766,68 @@ def build_parser() -> argparse.ArgumentParser:
         help="refuse to download files larger than this many MB (default: %(default)s)",
     )
 
+    batch_parser = subparsers.add_parser(
+        "download-batch",
+        help="download the media of many messages of one chat in one run, JSON report",
+        description=DOWNLOAD_BATCH_DESCRIPTION,
+        epilog=DOWNLOAD_BATCH_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    batch_parser.add_argument(
+        "chat_id",
+        metavar="CHAT_ID",
+        type=chat_id_type,
+        help="non-zero numeric chat/channel/user ID, same forms as in 'read'",
+    )
+    batch_parser.add_argument(
+        "msg_ids",
+        metavar="MSG_ID",
+        nargs="*",
+        type=positive_int_type,
+        help="positive message IDs, downloaded in this order",
+    )
+    batch_parser.add_argument(
+        "--ids-file",
+        metavar="FILE",
+        help="read more message IDs (whitespace-separated) from FILE; '-' reads stdin",
+    )
+    batch_parser.add_argument(
+        "--output",
+        metavar="DIR",
+        required=True,
+        help="destination directory; created if missing",
+    )
+    batch_parser.add_argument(
+        "--max-size",
+        metavar="MB",
+        type=max_size_type,
+        default=DEFAULT_MAX_SIZE_MB,
+        help="skip files larger than this many MB (default: %(default)s)",
+    )
+    batch_parser.add_argument(
+        "--pause",
+        metavar="SEC",
+        type=bounded_int_type(MIN_PAUSE, MAX_PAUSE),
+        default=DEFAULT_PAUSE,
+        help="seconds between two file transfers, plus random jitter "
+        "(default: %(default)s)",
+    )
+    batch_parser.add_argument(
+        "--max-files",
+        metavar="N",
+        type=bounded_int_type(1, MAX_MAX_FILES),
+        default=DEFAULT_MAX_FILES,
+        help="stop after this many file transfers (default: %(default)s)",
+    )
+    batch_parser.add_argument(
+        "--max-total",
+        metavar="MB",
+        type=bounded_int_type(1, MAX_MAX_TOTAL_MB),
+        default=DEFAULT_MAX_TOTAL_MB,
+        help="stop before the files transferred exceed this many MB "
+        "(default: %(default)s)",
+    )
+
     sync_parser = subparsers.add_parser(
         "sync",
         help="update the local archive of a chat, JSON output",
@@ -660,13 +871,61 @@ def _exit_closed_stdout() -> int:
     return 1
 
 
+def _batch_msg_ids(parser: argparse.ArgumentParser, args) -> list[int]:
+    """The download-batch message IDs: arguments first, then --ids-file."""
+    msg_ids = list(args.msg_ids)
+    if args.ids_file is not None:
+        try:
+            if args.ids_file == "-":
+                text = sys.stdin.read()
+            else:
+                text = Path(args.ids_file).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"cannot read --ids-file {args.ids_file} ({error})")
+        for token in text.split():
+            try:
+                msg_ids.append(positive_int_type(token))
+            except argparse.ArgumentTypeError:
+                parser.error(f"--ids-file: {token!r} is not a positive message ID")
+    if not msg_ids:
+        parser.error("no message IDs: pass MSG_ID arguments or --ids-file")
+    if args.max_size > args.max_total:
+        parser.error("--max-size must not exceed --max-total")
+    # Dropping duplicates keeps the first occurrence, so the order holds.
+    return list(dict.fromkeys(msg_ids))
+
+
+def _batch_exit_code(report: dict) -> int:
+    """Map a download-batch report to the exit code, explaining it on stderr."""
+    stopped = report["stopped"]
+    if stopped is not None and stopped["retry_after"] is not None:
+        error = RetryLaterError(stopped["error"], stopped["retry_after"])
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if stopped is not None:
+        print(f"error: {stopped['error']}", file=sys.stderr)
+        return 1
+    failed = report["summary"]["failed"]
+    if failed:
+        print(
+            f"error: {failed} message(s) failed; see 'error' in their results",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # On Windows, redirected stdout/stderr default to the legacy ANSI code
     # page, which cannot encode arbitrary text (emoji, paths etc.). JSON
     # output and error messages must always be UTF-8.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "download-batch":
+        args.msg_ids = _batch_msg_ids(parser, args)
+    exit_code = 0
     try:
         if args.command == "auth":
             asyncio.run(run_auth())
@@ -690,6 +949,21 @@ def main(argv: list[str] | None = None) -> int:
             result = asyncio.run(run_sync(args.chat_id, args.since))
             json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
             print()
+        elif args.command == "download-batch":
+            limits = BatchLimits(
+                max_size_mb=args.max_size,
+                pause=args.pause,
+                max_files=args.max_files,
+                max_total_mb=args.max_total,
+            )
+            report = asyncio.run(
+                run_download_batch(
+                    args.chat_id, args.msg_ids, Path(args.output), limits
+                )
+            )
+            json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+            print()
+            exit_code = _batch_exit_code(report)
         else:
             result = asyncio.run(
                 run_download(
@@ -744,7 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 - CLI boundary, report and exit
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
