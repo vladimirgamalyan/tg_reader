@@ -16,6 +16,7 @@ from .batch import (
     DEFAULT_MAX_FILES,
     DEFAULT_MAX_TOTAL_MB,
     DEFAULT_PAUSE,
+    MAX_IDS,
     MAX_MAX_FILES,
     MAX_MAX_TOTAL_MB,
     MAX_PAUSE,
@@ -399,7 +400,9 @@ Message IDs (the 'id' field of the 'read' output) come as MSG_ID arguments
 and/or from --ids-file: a file, or '-' for stdin, with the IDs separated
 by whitespace (e.g. one per line). Put a long list in a file. Duplicates
 are dropped. Files are fetched in the order given: put what matters most
-first, in case the run stops early.
+first, in case the run stops early. Pass only messages that have media
+(non-null 'media' in the 'read' output), not a range of IDs: a message
+without a file still costs a request.
 
 Files get exactly the names 'tg-reader download' gives them:
 '<CHAT_ID>_<MSG_ID>_<name>' in --output DIR (see 'download --help'). A
@@ -411,19 +414,22 @@ all there costs no network at all.
 
 The messages are fetched from Telegram 100 per request, right before
 their files are transferred (fetched again if a run goes on for long, as
-file references expire).
+file references expire), with the --pause between two such requests.
 """
 
 DOWNLOAD_BATCH_EPILOG = f"""\
 limits (per run; the run stops before a transfer that would exceed one):
-  --pause SEC      pause between two file transfers, plus a random 0-50%
-                   on top (default: {DEFAULT_PAUSE}, allowed {MIN_PAUSE}..{MAX_PAUSE})
+  --pause SEC      pause between two file transfers and between two message
+                   fetches, plus a random 0-50% on top (default: {DEFAULT_PAUSE},
+                   allowed {MIN_PAUSE}..{MAX_PAUSE})
   --max-files N    file transfers per run (default: {DEFAULT_MAX_FILES}, allowed 1..{MAX_MAX_FILES})
   --max-total MB   total size of the files transferred per run (default:
                    {DEFAULT_MAX_TOTAL_MB}, allowed 1..{MAX_MAX_TOTAL_MB}, at least --max-size)
   --max-size MB    per file, as in 'download' (default: {DEFAULT_MAX_SIZE_MB})
   A run stopped by --max-files or --max-total exits with code 2 and
   'retry after {RUN_LIMIT_RETRY}s': rest that long, then run the same command again.
+  More than {MAX_IDS} message IDs (after dropping duplicates) are refused
+  before the start, with exit code 1.
 
 output schema (single JSON object on stdout):
   results  arr  one element per requested message ID, in input order:
@@ -892,7 +898,13 @@ def _batch_msg_ids(parser: argparse.ArgumentParser, args) -> list[int]:
     if args.max_size > args.max_total:
         parser.error("--max-size must not exceed --max-total")
     # Dropping duplicates keeps the first occurrence, so the order holds.
-    return list(dict.fromkeys(msg_ids))
+    msg_ids = list(dict.fromkeys(msg_ids))
+    if len(msg_ids) > MAX_IDS:
+        parser.error(
+            f"too many message IDs ({len(msg_ids)}): at most {MAX_IDS} per run; "
+            "pass only messages with media, or split the list"
+        )
+    return msg_ids
 
 
 def _batch_exit_code(report: dict) -> int:

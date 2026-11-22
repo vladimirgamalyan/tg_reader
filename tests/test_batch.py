@@ -290,6 +290,22 @@ async def test_pauses_only_between_transfers(config_dir, out, sleep, mocker):
     assert all(3 <= delay <= 3 * (1 + batch.PAUSE_JITTER) for delay in delays)
 
 
+async def test_fetches_are_paced_without_transfers(config_dir, out, sleep, mocker):
+    # IDs without a file take no --max-files slot, so the pause between
+    # GetMessages requests is what keeps them from going back to back.
+    client, _ = make_client(mocker, [])
+
+    report = await run_download_batch(
+        CHAT, list(range(1, 251)), out, BatchLimits(pause=3)
+    )
+
+    assert client.get_messages.await_count == 3
+    delays = [call.args[0] for call in sleep.await_args_list]
+    assert len(delays) == 2
+    assert all(3 <= delay <= 3 * (1 + batch.PAUSE_JITTER) for delay in delays)
+    assert report["summary"]["skipped"] == 250
+
+
 async def test_max_files_stops_the_run(config_dir, out, sleep, mocker):
     client, _ = make_client(mocker, [make_message(i) for i in range(1, 6)])
 
@@ -591,6 +607,41 @@ def test_cli_rejects_bad_arguments(extra, out):
         cli.main(["download-batch", str(CHAT), *extra, "--output", str(out)])
 
     assert excinfo.value.code == 1
+
+
+def test_cli_rejects_too_many_ids(tmp_path, out, capsys):
+    ids_file = tmp_path / "ids.txt"
+    ids = range(1, batch.MAX_IDS + 2)
+    ids_file.write_text("\n".join(map(str, ids)), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(
+            [
+                "download-batch",
+                str(CHAT),
+                "--ids-file",
+                str(ids_file),
+                "--output",
+                str(out),
+            ]
+        )
+
+    assert excinfo.value.code == 1
+    assert f"at most {batch.MAX_IDS} per run" in capsys.readouterr().err
+
+
+def test_cli_id_limit_counts_after_dropping_duplicates(
+    config_dir, out, sleep, mocker, capsys
+):
+    mocker.patch.object(cli, "MAX_IDS", 2)
+    make_client(mocker, [make_message(1), make_message(2)])
+
+    exit_code, report, _ = run_cli(
+        ["download-batch", str(CHAT), "1", "2", "1", "--output", str(out)], capsys
+    )
+
+    assert exit_code == 0
+    assert report["summary"]["requested"] == 2
 
 
 def test_cli_rejects_bad_token_in_ids_file(tmp_path, out):

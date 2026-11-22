@@ -375,7 +375,8 @@ connection. Design rationale and the FloodWait it answers: ADR-0019.
 - Input: message IDs as arguments and/or from `--ids-file` (whitespace
   separated, `-` reads stdin), arguments first; duplicates are dropped,
   the order is kept. Files are transferred in that order, so the caller
-  puts what matters most first.
+  puts what matters most first. More than 5000 IDs (after dropping
+  duplicates) are refused before the start as a usage error (ADR-0020).
 - Files get exactly the names of `download` (see "File naming"), through
   the same transfer code (`.part` + rename, `--max-size` checked before and
   during the transfer, local file errors classified per ADR-0008).
@@ -388,7 +389,8 @@ connection. Design rationale and the FloodWait it answers: ADR-0019.
   before their files are transferred; a fetched message older than 30
   minutes is fetched again, since file references expire.
 - Pacing and caps per run: a pause of `--pause` seconds (default 3,
-  1..60) plus a random 0–50 % between two transfers; at most `--max-files`
+  1..60) plus a random 0–50 % between two transfers and between two
+  GetMessages requests; at most `--max-files`
   transfers (default 200, 1..1000) and `--max-total` MB of declared file
   size (default 1024, 1..4096, at least `--max-size`). The run stops before
   a transfer that would exceed a cap and reports `retry after 900s`
@@ -562,8 +564,9 @@ policy constants live at the top of the module.
   unbounded too (one GetHistory request per 100 messages); its
   bound is the `--since` date, and its requests are spaced at least 2 s
   apart like separate runs. A `download-batch` is bounded per run by
-  `--max-files` and `--max-total`, its transfers spaced by `--pause`, and
-  costs one GetMessages request per 100 messages.
+  `--max-files` and `--max-total`, and costs one GetMessages request per
+  100 messages, at most 5000 messages per run; its transfers and its
+  GetMessages requests are spaced by `--pause`.
 - **Downloads and syncs hold the lock** — a large download, a batch or a
   long sync keeps the global lock for its whole duration; a concurrent `tg-reader`
   run waits for the lock up to 30 s, then fails with exit code 2. This is

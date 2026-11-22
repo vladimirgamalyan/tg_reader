@@ -137,6 +137,9 @@ tg-reader download-batch <CHAT_ID> --ids-file <FILE> --output <DIR>
   reconnects to Telegram, a loop of about a hundred has earned the account a
   50-minute flood wait, and tg-reader refuses single downloads after 20 runs
   within an hour.
+- Pass only IDs of messages whose `media` is not null, not a range of IDs:
+  a message without a file still costs a request. A run takes at most 5000
+  IDs.
 - The batch fetches files in the given order (put what matters first), skips
   files already in `<DIR>`, and stops at its per-run limits (200 files, 1 GB
   by default). Exit code 2 means "stopped early": wait the `retry after Ns`

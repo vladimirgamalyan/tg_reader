@@ -80,3 +80,5 @@ Before proposing or re-proposing a decision that feels debatable, check
   (proposed, deferred)
 - [0019](0019-batch-download-and-download-run-budget.md) — Batch download
   over one connection, with run limits and a download-run budget
+- [0020](0020-pace-fetches-and-cap-ids-in-download-batch.md) — Pace message
+  fetches and cap message IDs in `download-batch`

@@ -55,6 +55,11 @@ MAX_MAX_TOTAL_MB = 4096
 RUN_LIMIT_RETRY = 900
 # Message IDs per GetMessages request: Telegram's own maximum.
 FETCH_CHUNK = 100
+# Message IDs one run accepts. IDs without a file to transfer (not found,
+# no media) cost GetMessages requests but no --max-files slot, so this is
+# what bounds the requests of a mistaken invocation, e.g. a whole ID range:
+# at most MAX_IDS / FETCH_CHUNK of them (ADR-0020).
+MAX_IDS = 5000
 # A fetched message older than this is fetched again before its file is
 # transferred: file references expire after a few hours, and a run on a
 # slow link can take that long.
@@ -156,6 +161,11 @@ def _stopped(reason: str, error: str, retry_after: float | None) -> dict:
     return {"reason": reason, "error": error, "retry_after": retry_after}
 
 
+async def _pause(limits: BatchLimits) -> None:
+    """Sleep the pause between two requests, plus its random extra."""
+    await asyncio.sleep(limits.pause * random.uniform(1, 1 + PAUSE_JITTER))
+
+
 async def _download_pending(
     client: TelegramClient,
     chat_id: int,
@@ -178,11 +188,17 @@ async def _download_pending(
             entity = await resolve_chat(client, chat_id)
             fetched = {}
             fetched_at = 0.0
+            fetches = 0
             for index, msg_id in enumerate(pending):
                 if (
                     msg_id not in fetched
                     or time.monotonic() - fetched_at > REFETCH_AFTER
                 ):
+                    # Paced like transfers: a run of IDs without media
+                    # would otherwise fetch back to back.
+                    if fetches:
+                        await _pause(limits)
+                    fetches += 1
                     chunk = pending[index : index + FETCH_CHUNK]
                     messages = await client.get_messages(entity, ids=chunk)
                     fetched = dict(zip(chunk, messages))
@@ -214,9 +230,7 @@ async def _download_pending(
                         RUN_LIMIT_RETRY,
                     )
                 if transfers:
-                    await asyncio.sleep(
-                        limits.pause * random.uniform(1, 1 + PAUSE_JITTER)
-                    )
+                    await _pause(limits)
                 transfers += 1
                 try:
                     saved = await save_media(
