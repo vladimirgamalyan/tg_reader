@@ -147,6 +147,18 @@ tg-reader download-batch <CHAT_ID> --ids-file <FILE> --output <DIR>
   stopped. Its JSON report says per message what was downloaded, skipped or
   failed, and why.
 
+Nothing tg-reader downloads is ever removed automatically. Files fetched only
+to be transcribed or looked at once (typically voice messages and video notes)
+are temporary:
+
+- Download them into a temporary folder: your session scratchpad if you have
+  one, otherwise the system temp directory. Never into a project folder or the
+  user's documents.
+- Once the transcription or answer is done, delete those files, together with
+  any transcript files written next to them and the folder if you created it.
+- Keep them only when the user asks to save them or names a destination
+  folder (for example an archive of a conversation).
+
 See `tg-reader download --help` and `tg-reader download-batch --help` for size
 limits, album handling and the full report schema.
 
